@@ -109,11 +109,39 @@ lsof -nP -iTCP:8081 -sTCP:LISTEN
 kill <PID>
 ```
 
+Determine your Mac's LAN IP once and reuse it for the cert, health check, browser
+URL, and QR code:
+
+```bash
+export LENS_MOSAIC_LAN_IP="$(ipconfig getifaddr en0 || ipconfig getifaddr en1)"
+export LENS_MOSAIC_URL="https://${LENS_MOSAIC_LAN_IP}:8081/"
+printf '%s\n' "$LENS_MOSAIC_URL"
+```
+
+If `LENS_MOSAIC_LAN_IP` is empty, make sure your Mac is connected to Wi-Fi and rerun
+the command with the correct network interface.
+
 The repository includes an OpenSSL config template at
 `hosted_app/app/certs/openssl-san.cnf`.
 
-Before generating the cert, edit that file and replace the sample LAN IP with your
-computer's actual LAN IP address.
+Before generating the cert, update that file with your current LAN IP address:
+
+```bash
+cd hosted_app/app
+python - <<'PY'
+from pathlib import Path
+import os
+import re
+
+ip = os.environ["LENS_MOSAIC_LAN_IP"]
+path = Path("certs/openssl-san.cnf")
+text = path.read_text()
+text = re.sub(r"^CN = .+$", f"CN = {ip}", text, flags=re.MULTILINE)
+text = re.sub(r"^IP\\.2 = .+$", f"IP.2 = {ip}", text, flags=re.MULTILINE)
+path.write_text(text)
+print(f"Updated {path} for {ip}")
+PY
+```
 
 Generate local cert files:
 
@@ -143,13 +171,13 @@ uv run --project .. uvicorn main:app \
 Verify from your Mac before moving to the phone:
 
 ```bash
-curl -k https://YOUR_LAN_IP:8081/health
+curl -k "${LENS_MOSAIC_URL}health"
 ```
 
 Open this from your phone:
 
 ```text
-https://YOUR_LAN_IP:8081/
+${LENS_MOSAIC_URL}
 ```
 
 Open the URL directly in Safari once before relying on the QR code, so you can accept
@@ -160,9 +188,10 @@ Generate a QR code for the local LAN URL:
 ```bash
 uv run --with 'qrcode[pil]' python - <<'PY'
 from pathlib import Path
+import os
 import qrcode
 
-url = "https://YOUR_LAN_IP:8081/"
+url = os.environ["LENS_MOSAIC_URL"]
 out = Path("/tmp/lens-mosaic-hosted-app-mobile-qr.png")
 img = qrcode.make(url)
 img.save(out)
@@ -170,6 +199,9 @@ print(out)
 print(url)
 PY
 ```
+
+If `uv` cannot write to its default cache, rerun the same command with
+`UV_CACHE_DIR=/tmp/uv-cache` prefixed.
 
 Open `/tmp/lens-mosaic-hosted-app-mobile-qr.png`, show it on your desktop, and let
 the user scan it from their smartphone.

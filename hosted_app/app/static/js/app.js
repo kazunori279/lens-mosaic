@@ -297,8 +297,8 @@ async function startCamera() {
   videoContainer.classList.add("active");
   camOn = true;
 
-  // Send frames every 1 second
-  camInterval = setInterval(captureAndSend, 1000);
+  // Send frames every 500ms
+  camInterval = setInterval(captureAndSend, 500);
 }
 
 function stopCamera() {
@@ -344,18 +344,7 @@ async function flipCamera() {
 // --- Image Tile WebSocket ---
 
 const imageTileEl = document.getElementById("image-tile");
-// Track tiles: id -> { el, lastSeen, createdAt, cell }
-const tileMap = new Map();
-function fadeOutAndRemove(el) {
-  el.classList.remove("loaded");
-  el.classList.add("fade-out");
-  const remove = () => el.remove();
-  el.addEventListener("transitionend", remove, { once: true });
-  setTimeout(remove, 5500); // fallback if transitionend never fires
-}
-
-// Track occupied cells (0-99)
-const occupiedCells = new Set();
+const TILE_FADE_MS = 2500;
 
 function getGridSize() {
   const size = Number.parseInt(
@@ -386,64 +375,6 @@ function getCellCoords(cell, gridSize) {
   };
 }
 
-function getNextEmptyCell() {
-  // Return the empty cell that keeps the visible cluster centered.
-  const gridSize = getGridSize();
-  const center = (gridSize - 1) / 2;
-  const cellsByDistance = getCellsByDistance();
-  const occupied = Array.from(occupiedCells, (cell) => getCellCoords(cell, gridSize));
-  let bestCell = null;
-  let bestScore = Number.POSITIVE_INFINITY;
-  let bestDist = Number.POSITIVE_INFINITY;
-
-  for (const cell of cellsByDistance) {
-    if (occupiedCells.has(cell)) continue;
-    const candidate = getCellCoords(cell, gridSize);
-    const cluster = [...occupied, candidate];
-    const avgRow = cluster.reduce((sum, item) => sum + item.row, 0) / cluster.length;
-    const avgCol = cluster.reduce((sum, item) => sum + item.col, 0) / cluster.length;
-    const centerOffset = Math.hypot(avgRow - center, avgCol - center);
-    const distFromCenter = Math.hypot(candidate.row - center, candidate.col - center);
-
-    if (
-      centerOffset < bestScore ||
-      (centerOffset === bestScore && distFromCenter < bestDist)
-    ) {
-      bestCell = cell;
-      bestScore = centerOffset;
-      bestDist = distFromCenter;
-    }
-  }
-
-  return bestCell;
-}
-
-function getCellDistRank() {
-  return new Map(getCellsByDistance().map((cell, index) => [cell, index]));
-}
-
-function replaceFarthestTile(newItem, brightness, normalized) {
-  // Evict the tile farthest from center so new tile can take a center spot
-  let farthest = null;
-  let farthestRank = -1;
-  const cellDistRank = getCellDistRank();
-  for (const [id, entry] of tileMap) {
-    const rank = cellDistRank.get(entry.cell) ?? 0;
-    if (rank > farthestRank) {
-      farthestRank = rank;
-      farthest = id;
-    }
-  }
-  if (!farthest) return;
-  const entry = tileMap.get(farthest);
-  const oldCell = entry.cell;
-  occupiedCells.delete(oldCell);
-  tileMap.delete(farthest);
-  fadeOutAndRemove(entry.el);
-  const cell = getNextEmptyCell() ?? oldCell;
-  addTileAt(cell, newItem, brightness);
-}
-
 function getTileSize() {
   const gridSize = getGridSize();
   const w = Math.ceil(imageTileEl.clientWidth / gridSize);
@@ -451,29 +382,299 @@ function getTileSize() {
   return { w, h };
 }
 
-function addTileAt(cell, item, brightness) {
-  const id = item.id;
-  const gridSize = getGridSize();
+function buildTileImageUrl(id) {
   const { w, h } = getTileSize();
-  const img = document.createElement("img");
-  img.alt = item.name || id;
-  img.title = `${item.name || id} (score: ${item.score?.toFixed(3) ?? "N/A"})`;
-  img.style.filter = `brightness(${brightness})`;
-  img.style.cursor = "pointer";
-  img.addEventListener("click", () => showItemPopup(id));
-  const row = Math.floor(cell / gridSize) + 1;
-  const col = (cell % gridSize) + 1;
-  img.style.gridRow = row;
-  img.style.gridColumn = col;
-  img.onload = () => {
-    img.offsetHeight;
-    img.classList.add("loaded");
-  };
-  imageTileEl.appendChild(img);
-  img.src = `https://u-mercari-images.mercdn.net/photos/${id}_1.jpg?w=${w}&h=${h}&fitcrop&sharpen`;
-  occupiedCells.add(cell);
-  tileMap.set(id, { el: img, lastSeen: Date.now(), createdAt: Date.now(), cell });
+  return `https://u-mercari-images.mercdn.net/photos/${id}_1.jpg?w=${w}&h=${h}&fitcrop&sharpen`;
 }
+
+class MosaicCellView {
+  constructor(cell) {
+    this.cell = cell;
+    this.current = null;
+    this.pending = null;
+    this.phase = "empty";
+    this.phaseTimer = null;
+  }
+
+  getAssignedId() {
+    return this.pending?.id ?? this.current?.id ?? null;
+  }
+
+  clear() {
+    this.clearPhaseTimer();
+    this.pending = null;
+    if (this.current?.el) {
+      this.current.el.remove();
+    }
+    this.current = null;
+    this.phase = "empty";
+  }
+
+  fadeOutToEmpty() {
+    this.pending = null;
+    if (this.current) {
+      this.startFadeOut();
+    }
+  }
+
+  removeIfStale(now, maxAgeMs) {
+    const lastSeen = this.pending?.lastSeen ?? this.current?.lastSeen ?? 0;
+    if (lastSeen && now - lastSeen > maxAgeMs) {
+      this.applyDesired(null);
+    }
+  }
+
+  applyDesired(tile) {
+    if (!tile) {
+      this.pending = null;
+      if (this.current) {
+        this.startFadeOut();
+      }
+      return;
+    }
+
+    if (this.pending?.id === tile.id) {
+      this.pending = { ...tile };
+      return;
+    }
+
+    if (this.current?.id === tile.id) {
+      this.pending = null;
+      this.syncRecord(this.current, tile);
+      if (this.phase === "fadingOut") {
+        this.current.el.classList.remove("fade-out");
+        this.startFadeIn(this.current);
+      }
+      return;
+    }
+
+    if (!this.current) {
+      this.mountTile(tile);
+      return;
+    }
+
+    this.pending = { ...tile };
+    if (this.phase === "stable") {
+      this.startFadeOut();
+    }
+  }
+
+  syncRecord(record, tile) {
+    record.id = tile.id;
+    record.item = tile.item;
+    record.brightness = tile.brightness;
+    record.lastSeen = tile.lastSeen;
+    if (!record.el) return;
+    record.el.alt = tile.item.name || tile.id;
+    record.el.title = `${tile.item.name || tile.id} (score: ${tile.item.score?.toFixed(3) ?? "N/A"})`;
+    record.el.style.filter = `brightness(${tile.brightness})`;
+  }
+
+  mountTile(tile) {
+    const record = {
+      ...tile,
+      el: this.createImageElement(tile),
+    };
+    this.current = record;
+    this.pending = null;
+    this.phase = "fadingIn";
+    imageTileEl.appendChild(record.el);
+    record.el.src = buildTileImageUrl(tile.id);
+    if (record.el.complete && record.el.naturalWidth > 0) {
+      this.startFadeIn(record);
+    }
+  }
+
+  createImageElement(tile) {
+    const img = document.createElement("img");
+    const gridSize = getGridSize();
+    const row = Math.floor(this.cell / gridSize) + 1;
+    const col = (this.cell % gridSize) + 1;
+    img.alt = tile.item.name || tile.id;
+    img.title = `${tile.item.name || tile.id} (score: ${tile.item.score?.toFixed(3) ?? "N/A"})`;
+    img.style.filter = `brightness(${tile.brightness})`;
+    img.style.cursor = "pointer";
+    img.style.gridRow = row;
+    img.style.gridColumn = col;
+    img.addEventListener("click", () => showItemPopup(tile.id));
+    img.addEventListener("load", () => {
+      if (this.current?.id === tile.id) {
+        this.startFadeIn(this.current);
+      }
+    });
+    img.addEventListener("transitionend", (event) => {
+      if (event.target !== img || event.propertyName !== "opacity") return;
+      if (!this.current || this.current.el !== img) return;
+      if (this.phase === "fadingIn") {
+        this.finishFadeIn(this.current);
+        return;
+      }
+      if (this.phase === "fadingOut") {
+        this.finishFadeOut(this.current);
+      }
+    });
+    return img;
+  }
+
+  startFadeIn(record) {
+    if (this.current !== record) return;
+    this.clearPhaseTimer();
+    this.phase = "fadingIn";
+    record.el.classList.remove("fade-out");
+    requestAnimationFrame(() => {
+      if (this.current !== record) return;
+      record.el.offsetHeight;
+      record.el.classList.add("loaded");
+    });
+    this.phaseTimer = window.setTimeout(() => {
+      this.finishFadeIn(record);
+    }, TILE_FADE_MS + 500);
+  }
+
+  finishFadeIn(record) {
+    if (this.current !== record || this.phase !== "fadingIn") return;
+    this.clearPhaseTimer();
+    this.phase = "stable";
+    if (this.pending && this.pending.id !== record.id) {
+      this.startFadeOut();
+    }
+  }
+
+  startFadeOut() {
+    if (!this.current || this.phase === "fadingOut") return;
+    this.clearPhaseTimer();
+    this.phase = "fadingOut";
+    this.current.el.classList.remove("loaded");
+    this.current.el.classList.add("fade-out");
+    this.phaseTimer = window.setTimeout(() => {
+      if (this.current) {
+        this.finishFadeOut(this.current);
+      }
+    }, TILE_FADE_MS + 500);
+  }
+
+  finishFadeOut(record) {
+    if (this.current !== record || this.phase !== "fadingOut") return;
+    this.clearPhaseTimer();
+    record.el.remove();
+    const next = this.pending;
+    this.current = null;
+    this.pending = null;
+    this.phase = "empty";
+    if (next) {
+      this.mountTile(next);
+    }
+  }
+
+  clearPhaseTimer() {
+    if (this.phaseTimer) {
+      clearTimeout(this.phaseTimer);
+      this.phaseTimer = null;
+    }
+  }
+}
+
+class MosaicController {
+  constructor() {
+    this.gridSize = 0;
+    this.cells = [];
+    this.source = null;
+  }
+
+  ensureGrid() {
+    const nextGridSize = getGridSize();
+    if (nextGridSize === this.gridSize && this.cells.length === nextGridSize * nextGridSize) {
+      return;
+    }
+    this.clearAll();
+    this.gridSize = nextGridSize;
+    this.cells = Array.from(
+      { length: this.gridSize * this.gridSize },
+      (_, cell) => new MosaicCellView(cell),
+    );
+  }
+
+  clearAll() {
+    this.cells.forEach((cell) => cell.clear());
+  }
+
+  fadeOutAll() {
+    this.ensureGrid();
+    this.cells.forEach((cell) => cell.fadeOutToEmpty());
+  }
+
+  render(items, source) {
+    this.ensureGrid();
+    this.source = source;
+
+    const desiredTiles = this.buildDesiredTiles(items);
+    const assignments = this.computeAssignments(desiredTiles);
+
+    this.cells.forEach((cell) => {
+      cell.applyDesired(assignments.get(cell.cell) ?? null);
+    });
+  }
+
+  pruneStaleSimilarTiles(maxAgeMs) {
+    if (this.source !== "similar") return;
+    const now = Date.now();
+    this.cells.forEach((cell) => cell.removeIfStale(now, maxAgeMs));
+  }
+
+  buildDesiredTiles(items) {
+    const filteredItems = items.filter((item) => item.score != null);
+    if (!filteredItems.length) return [];
+
+    const scores = filteredItems.map((item) => item.score ?? 0);
+    const minScore = Math.min(...scores);
+    const maxScore = Math.max(...scores);
+    const scoreRange = maxScore - minScore || 1;
+
+    return [...filteredItems]
+      .sort((a, b) => (b.score ?? 0) - (a.score ?? 0))
+      .map((item) => {
+        const normalized = ((item.score ?? 0) - minScore) / scoreRange;
+        return {
+          id: item.id,
+          item,
+          brightness: 0.3 + normalized * 0.7,
+          normalized,
+          lastSeen: Date.now(),
+        };
+      })
+      .filter((tile) => tile.normalized >= 0.2)
+      .slice(0, this.gridSize * this.gridSize);
+  }
+
+  computeAssignments(desiredTiles) {
+    const desiredById = new Map(desiredTiles.map((tile) => [tile.id, tile]));
+    const assignments = new Map();
+    const reservedCells = new Set();
+
+    for (const cell of this.cells) {
+      const assignedId = cell.getAssignedId();
+      if (!assignedId || !desiredById.has(assignedId) || reservedCells.has(cell.cell)) {
+        continue;
+      }
+      assignments.set(cell.cell, desiredById.get(assignedId));
+      desiredById.delete(assignedId);
+      reservedCells.add(cell.cell);
+    }
+
+    const preferredCells = getCellsByDistance().filter((cell) => !reservedCells.has(cell));
+    for (const tile of desiredTiles) {
+      if (!desiredById.has(tile.id)) continue;
+      const nextCell = preferredCells.shift();
+      if (nextCell == null) break;
+      assignments.set(nextCell, tile);
+      desiredById.delete(tile.id);
+    }
+
+    return assignments;
+  }
+}
+
+const mosaicController = new MosaicController();
 
 let tilePausedUntil = 0;
 
@@ -485,17 +686,11 @@ function updateRecommendedControls() {
 }
 
 function clearAllTiles() {
-  imageTileEl.querySelectorAll("img").forEach((img) => img.remove());
-  tileMap.clear();
-  occupiedCells.clear();
+  mosaicController.clearAll();
 }
 
 function fadeOutAllTiles() {
-  for (const [, entry] of tileMap) {
-    fadeOutAndRemove(entry.el);
-  }
-  tileMap.clear();
-  occupiedCells.clear();
+  mosaicController.fadeOutAll();
 }
 
 function renderTileItems(items, source) {
@@ -503,69 +698,16 @@ function renderTileItems(items, source) {
   displayTileSource = source;
   updateRecommendedControls();
   if (Date.now() < tilePausedUntil) return;
-  if (prevSource !== displayTileSource) clearAllTiles();
-  imageTileEl.querySelectorAll("img.fade-out").forEach((img) => img.remove());
-
-  const filteredItems = items.filter((item) => item.score != null);
-  if (!filteredItems.length) {
+  if (prevSource !== displayTileSource) {
     clearAllTiles();
-    return;
   }
-
-  const scores = filteredItems.map((item) => item.score ?? 0);
-  const minScore = Math.min(...scores);
-  const maxScore = Math.max(...scores);
-  const scoreRange = maxScore - minScore || 1;
-
-  const currentIds = new Set(filteredItems.filter((item) => {
-    const normalized = ((item.score ?? 0) - minScore) / scoreRange;
-    return normalized >= 0.2;
-  }).map((item) => item.id));
-
-  for (const [id, entry] of tileMap) {
-    if (!currentIds.has(id)) {
-      fadeOutAndRemove(entry.el);
-      occupiedCells.delete(entry.cell);
-      tileMap.delete(id);
-    }
-  }
-
-  const sorted = [...filteredItems].sort((a, b) => (b.score ?? 0) - (a.score ?? 0));
-  const now = Date.now();
-
-  for (const item of sorted) {
-    const id = item.id;
-    const normalized = ((item.score ?? 0) - minScore) / scoreRange;
-    if (normalized < 0.2) continue;
-    const brightness = 0.3 + normalized * 0.7;
-
-    if (tileMap.has(id)) {
-      const entry = tileMap.get(id);
-      entry.lastSeen = now;
-      entry.el.style.filter = `brightness(${brightness})`;
-    } else {
-      const cell = getNextEmptyCell();
-      if (cell !== null) {
-        addTileAt(cell, item, brightness);
-      } else {
-        replaceFarthestTile(item, brightness, normalized);
-      }
-    }
-  }
+  mosaicController.render(items, source);
 }
 
 // Periodic cleanup: remove tiles not seen in results for 5s (only in similar mode)
 setInterval(() => {
-  if (displayTileSource !== "similar") return;
   if (Date.now() < tilePausedUntil) return;
-  const now = Date.now();
-  for (const [id, entry] of tileMap) {
-    if (now - entry.lastSeen > 5000) {
-      fadeOutAndRemove(entry.el);
-      occupiedCells.delete(entry.cell);
-      tileMap.delete(id);
-    }
-  }
+  mosaicController.pruneStaleSimilarTiles(5000);
 }, 1000);
 
 function connectImageTile() {
