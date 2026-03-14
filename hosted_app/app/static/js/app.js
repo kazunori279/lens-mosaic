@@ -344,7 +344,7 @@ async function flipCamera() {
 // --- Image Tile WebSocket ---
 
 const imageTileEl = document.getElementById("image-tile");
-const TILE_FADE_MS = 2500;
+const TILE_FADE_MS = 2000;
 
 function getGridSize() {
   const size = Number.parseInt(
@@ -677,6 +677,8 @@ class MosaicController {
 const mosaicController = new MosaicController();
 
 let tilePausedUntil = 0;
+let tileTransitionUntil = 0;
+let tileTransitionTimer = null;
 
 function updateRecommendedControls() {
   closeRecommendedBtn.classList.toggle(
@@ -698,6 +700,7 @@ function renderTileItems(items, source) {
   displayTileSource = source;
   updateRecommendedControls();
   if (Date.now() < tilePausedUntil) return;
+  if (Date.now() < tileTransitionUntil) return;
   if (prevSource !== displayTileSource) {
     clearAllTiles();
   }
@@ -817,10 +820,15 @@ closeRecommendedBtn.addEventListener("click", () => {
   displayTileSource = "similar";
   updateRecommendedControls();
   fadeOutAllTiles();
+  tileTransitionUntil = Date.now() + TILE_FADE_MS + 50;
+  if (tileTransitionTimer) {
+    clearTimeout(tileTransitionTimer);
+  }
   if (similarTileItems.length) {
-    setTimeout(() => {
+    tileTransitionTimer = setTimeout(() => {
+      tileTransitionTimer = null;
       renderTileItems(similarTileItems, "similar");
-    }, 120);
+    }, TILE_FADE_MS + 50);
   }
 });
 
