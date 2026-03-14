@@ -21,9 +21,11 @@ Set:
 - `SEARCH_SERVICE_URL` to your hosted Cloud Run URL
 - `AGENT_MODEL` if you want to override the default
 
+This local server only handles the live ADK path. Search and item data come from `SEARCH_SERVICE_URL`.
+
 ## 2. Start the local live server
 
-HTTP:
+Desktop-only HTTP:
 
 ```bash
 cd local_live/app
@@ -41,6 +43,8 @@ uv run --project .. uvicorn main:app \
   --ssl-certfile certs/lan-cert.pem
 ```
 
+Use the HTTPS form for phone or tablet testing. Safari on iPad/iPhone will usually require you to accept the local certificate warning before the page can access camera and microphone.
+
 ## 3. Open the hosted UI
 
 Desktop localhost example:
@@ -55,9 +59,21 @@ LAN example for phone or tablet:
 https://YOUR_SERVICE_URL/?backend=https://YOUR_LAN_IP:8000
 ```
 
+Notes:
+
+- `127.0.0.1` only works when the browser runs on the same machine as the local live server.
+- Phones and tablets should use the laptop's LAN IP, such as `192.168.1.10`.
+- The hosted UI keeps using the hosted search API even when `backend=` points to your local server.
+
 ## 4. Quick checks
 
 - `http://127.0.0.1:8000/health` or `https://YOUR_LAN_IP:8000/health`
 - `https://YOUR_SERVICE_URL/health`
 
+## 5. Expected behavior
+
+- Similar items should appear from camera frames even before you speak.
+- If you ask the agent to find matching items, the agent should speak after the `find_items(...)` tool call and update the recommendation tiles.
+
 If the UI loads but Start never enables, check the live WebSocket backend URL first.
+If transcription appears but the agent does not answer, check the local live server log for Gemini Live or tool-call errors.

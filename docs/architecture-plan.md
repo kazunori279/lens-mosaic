@@ -1,4 +1,4 @@
-# Architecture Plan
+# Architecture Notes
 
 ## Goals
 
@@ -13,7 +13,7 @@ LensMosaic needs to support two modes from the same codebase:
    - Hosted public search API
    - Hosted live API server
 
-## Proposed Repo Layout
+## Current Repo Layout
 
 ```text
 lens-mosaic/
@@ -51,3 +51,10 @@ lens-mosaic/
 4. Consolidate or copy shared static assets intentionally
 5. Move search-service settings to environment variables
 6. Add deployment docs for Cloud Run
+
+## Current Implementation Notes
+
+- `hosted_app` serves static files, search endpoints, item detail endpoints, and hosted live WebSocket endpoints.
+- `local_live` serves the live WebSocket endpoints and delegates search to the hosted service through `SEARCH_SERVICE_URL`.
+- The frontend switches live origin with the `backend=` query parameter.
+- The `find_items(...)` tool path now performs its search work directly instead of round-tripping through the main event loop, which avoids stalled live turns after image-based requests.

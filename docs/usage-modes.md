@@ -44,3 +44,5 @@ The UI will use:
 - Desktop localhost flows are the easiest for blog readers.
 - Phone and tablet readers need the local live server reachable on a LAN URL if they are not using the same device that runs the backend.
 - The local live server should be configured to call the hosted search API through `SEARCH_SERVICE_URL`.
+- If the local live server is used from an iPad or phone, prefer `https://YOUR_LAN_IP:8000` rather than plain HTTP.
+- The current implementation has been smoke-tested for similar-item search and agent `find_items(...)` responses in both modes.

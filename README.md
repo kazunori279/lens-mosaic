@@ -1,30 +1,35 @@
 # LensMosaic
 
-LensMosaic now lives in a dedicated repository with two app entrypoints:
+LensMosaic supports two working runtime modes from the same repository:
 
-- `hosted_app/`: the Cloud Run app that serves the UI, public search API, and hosted live demo API
-- `local_live/`: the local live API server used in the blog post flow
+- `hosted_app/`: Cloud Run app for static UI, public search API, item detail API, and hosted live demo API
+- `local_live/`: local ADK live API server for the blog-reader flow
 
 ## Supported Modes
 
-### 1. Blog reader mode
+### 1. Blog Reader Mode
 
 - Open the UI from the hosted Cloud Run app
 - Use the hosted public search API
 - Run the live API locally from `local_live/app/main.py`
 
-In this mode, the browser uses:
+The browser uses:
 
-- hosted origin for search and item detail requests
+- hosted origin for UI, search, and item detail requests
 - local origin for live WebSocket connections
 
-### 2. Full hosted demo mode
+### 2. Full Hosted Demo Mode
 
-- Open the UI from the hosted Cloud Run app
-- Use the hosted public search API
-- Use the hosted live API from the same Cloud Run service
+- Open the hosted Cloud Run app directly
+- Use the same origin for UI, search, item details, and live WebSockets
 
-In this mode, everything is same-origin.
+## What Is Working
+
+- Similar-item search from camera frames
+- Agent-triggered `find_items(...)` flows from speech and image context
+- Hosted demo mode
+- Hosted UI plus local live backend mode
+- Desktop and LAN-based phone/tablet testing when the local live server is started with HTTPS
 
 ## Repository Layout
 
@@ -37,15 +42,9 @@ lens-mosaic/
     └── app/
 ```
 
-## Current Status
+## Start Here
 
-The repo has been migrated from the earlier prototype directories and the hosted app now contains:
-
-- static UI serving
-- public search endpoints
-- hosted live WebSocket endpoints
-
-The frontend has also been updated so it can choose separate `searchOrigin` and `liveOrigin` at runtime.
-
-See `docs/architecture-plan.md` for the target architecture and `docs/usage-modes.md` for the runtime model.
-See `docs/deploy-cloud-run.md` for deployment and `docs/local-reader-quickstart.md` for the blog-reader flow.
+- [Local reader quickstart](/Users/kaz/Documents/GitHub/lens-mosaic/docs/local-reader-quickstart.md)
+- [Cloud Run deployment](/Users/kaz/Documents/GitHub/lens-mosaic/docs/deploy-cloud-run.md)
+- [Usage modes](/Users/kaz/Documents/GitHub/lens-mosaic/docs/usage-modes.md)
+- [Architecture notes](/Users/kaz/Documents/GitHub/lens-mosaic/docs/architecture-plan.md)
