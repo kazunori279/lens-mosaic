@@ -45,7 +45,7 @@ lens-mosaic/
 ## Start Here
 
 - [Local reader quickstart](/Users/kaz/Documents/GitHub/lens-mosaic/docs/local-reader-quickstart.md)
-- [Hosted app mobile quickstart](/Users/kaz/Documents/GitHub/lens-mosaic/docs/hosted-app-mobile-quickstart.md)
+- [Hosted app README](/Users/kaz/Documents/GitHub/lens-mosaic/hosted_app/README.md)
 - [Cloud Run deployment](/Users/kaz/Documents/GitHub/lens-mosaic/docs/deploy-cloud-run.md)
 - [Usage modes](/Users/kaz/Documents/GitHub/lens-mosaic/docs/usage-modes.md)
 - [Architecture notes](/Users/kaz/Documents/GitHub/lens-mosaic/docs/architecture-plan.md)

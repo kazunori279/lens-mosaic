@@ -14,71 +14,104 @@ This app is intended to support both:
 1. same-origin hosted demo mode
 2. hosted UI plus local live backend mode
 
-## Local Start
+## Mobile Local Test
 
-Configure the app first:
+Use this flow when you want to run `hosted_app` locally and open it from a phone or
+tablet on the same LAN.
+
+## 1. Configure the app
 
 ```bash
 cd hosted_app/app
 cp .env.example .env
 ```
 
-Then start it locally:
+Set the required values in `.env` for your local environment.
+
+## 2. Run the direct model preflight
+
+Before starting the server, verify that the Live model itself is responding from this
+machine:
+
+```bash
+uv run --project hosted_app python hosted_app/model_test.py --timeout 60
+```
+
+This probe runs:
+
+- a Vertex AI text test
+- a Vertex AI audio test
+- a Gemini API text test, if `GEMINI_API_KEY` or `GOOGLE_API_KEY` is set
+- a Gemini API audio test, if `GEMINI_API_KEY` or `GOOGLE_API_KEY` is set
+
+Use this step to separate model/provider latency from app/server latency before
+debugging `uvicorn` or browser behavior.
+
+## 3. Clear port 8081 if needed
+
+If port `8081` is already in use, stop the existing process first:
+
+```bash
+lsof -nP -iTCP:8081 -sTCP:LISTEN
+kill <PID>
+```
+
+## 4. Generate local cert files
+
+The repository includes an OpenSSL config template at
+`hosted_app/app/certs/openssl-san.cnf`.
+
+Before generating the cert, edit that file and replace the sample LAN IP with your
+computer's actual LAN IP address.
+
+Then run:
 
 ```bash
 cd hosted_app/app
-uv run --project .. uvicorn main:app --host 127.0.0.1 --port 8081
+mkdir -p certs
+openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
+  -keyout certs/lan-key.pem \
+  -out certs/lan-cert.pem \
+  -config certs/openssl-san.cnf \
+  -extensions req_ext
 ```
 
-## Local Test
+These generated cert files are ignored by git and should stay local to your machine.
 
-### Hosted-only mode
+## 5. Start the hosted app over HTTPS
 
-Open:
-
-```text
-http://127.0.0.1:8081/
-```
-
-Quick checks:
-
-- `http://127.0.0.1:8081/health`
-- `http://127.0.0.1:8081/`
-
-### Hosted UI plus local_live mode
-
-Start `local_live` with the hosted app as its search backend:
+For phone or tablet testing, the HTTPS server must be started with `--host 0.0.0.0`
+so the app is reachable from other devices on your LAN.
 
 ```bash
-cd local_live/app
-SEARCH_SERVICE_URL=http://127.0.0.1:8081 \
-  uv run --project .. uvicorn main:app --host 127.0.0.1 --port 8000
+cd hosted_app/app
+uv run --project .. uvicorn main:app \
+  --host 0.0.0.0 \
+  --port 8081 \
+  --ssl-keyfile certs/lan-key.pem \
+  --ssl-certfile certs/lan-cert.pem
 ```
 
-Then open:
+## 6. Verify from your Mac
+
+Check the LAN URL before moving to the phone:
+
+```bash
+curl -k https://YOUR_LAN_IP:8081/health
+```
+
+## 7. Open it from your phone
+
+Use your computer's LAN IP in the URL:
 
 ```text
-http://127.0.0.1:8081/?backend=http://127.0.0.1:8000
+https://YOUR_LAN_IP:8081/
 ```
 
-Quick checks:
+Open the URL directly in Safari once before relying on the QR code, so you can accept
+the local certificate warning explicitly.
 
-- `http://127.0.0.1:8000/health`
-- `http://127.0.0.1:8000/`
-- `curl -X POST http://127.0.0.1:8081/search -H 'content-type: application/json' -d '{"text":"speaker"}'`
-
-Expected behavior:
-
-- the hosted app keeps serving the UI and search endpoints
-- `local_live` handles `/ws/...` and `/ws_image_tile/...`
-- item details still resolve through the hosted app
-
-For local testing on a phone or tablet, run `hosted_app` over HTTPS with your own
-locally generated certificate files. See
-[docs/hosted-app-mobile-quickstart.md](/Users/kaz/Documents/GitHub/lens-mosaic/docs/hosted-app-mobile-quickstart.md).
-
-For phone or tablet testing, make sure the HTTPS server is started with `--host 0.0.0.0`
-so the app is reachable from other devices on your LAN.
+## 8. Generate a QR code
 
 After the HTTPS server is running, you can generate a QR code for the phone URL:
 
@@ -97,10 +130,18 @@ print(url)
 PY
 ```
 
-Phone/tablet notes:
+Open the generated PNG at `/tmp/lens-mosaic-hosted-app-mobile-qr.png`, show it to the
+user on your desktop, and let the user scan it from their smartphone.
+
+After scanning, have the user open the hosted app on their smartphone and test the page
+load, camera permission, microphone permission, and live connection flow.
+
+## 9. Notes
 
 - Verify the LAN URL from your Mac first with `curl -k https://YOUR_LAN_IP:8081/health`.
-- Open `https://YOUR_LAN_IP:8081/` in Safari once before relying on the QR code, so you
-  can accept the local certificate warning.
+- If `model_test.py` is already slow, fix the provider/model issue before debugging the
+  hosted app server.
 - If the phone can reach the page but live mode disconnects quickly, check the server log
   separately from the basic LAN/HTTPS setup. A page load proves the LAN path is working.
+- For the hosted UI plus `local_live` workflow, see
+  [docs/local-reader-quickstart.md](/Users/kaz/Documents/GitHub/lens-mosaic/docs/local-reader-quickstart.md).
