@@ -28,6 +28,35 @@ SEARCH_SERVICE_URL = os.getenv("SEARCH_SERVICE_URL", "http://localhost:8001")
 APP_NAME = "lens-mosaic"
 IMAGE_INTERVAL = 1.0
 HTTP_CLIENT: httpx.AsyncClient | None = None
+DEFAULT_VERTEX_AGENT_MODEL = "gemini-live-2.5-flash-native-audio"
+DEFAULT_GEMINI_AGENT_MODEL = "gemini-2.5-flash-native-audio-preview-12-2025"
+
+
+def _env_flag(name: str, default: bool = False) -> bool:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
+LIVE_USE_VERTEXAI = _env_flag("GOOGLE_GENAI_USE_VERTEXAI")
+LIVE_PROVIDER = "vertex-ai" if LIVE_USE_VERTEXAI else "gemini-api"
+DEFAULT_AGENT_MODEL = (
+    DEFAULT_VERTEX_AGENT_MODEL if LIVE_USE_VERTEXAI else DEFAULT_GEMINI_AGENT_MODEL
+)
+RAW_AGENT_MODEL = os.getenv("AGENT_MODEL")
+if RAW_AGENT_MODEL in {
+    None,
+    "",
+    DEFAULT_VERTEX_AGENT_MODEL,
+    DEFAULT_GEMINI_AGENT_MODEL,
+}:
+    AGENT_MODEL = DEFAULT_AGENT_MODEL
+    AGENT_MODEL_SOURCE = "provider-default"
+else:
+    AGENT_MODEL = RAW_AGENT_MODEL
+    AGENT_MODEL_SOURCE = "env"
+LIVE_API_KEY_PRESENT = bool(os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY"))
 
 logging.basicConfig(
     level=logging.DEBUG,
@@ -96,7 +125,7 @@ async def get_item_api(item_id: str) -> dict | None:
 # ADK agent used for live voice chat.
 agent = Agent(
     name="mm_agent",
-    model=os.getenv("AGENT_MODEL", "gemini-live-2.5-flash-native-audio"),
+    model=AGENT_MODEL,
     tools=[google_search],
     instruction="""\
 You are a helpful AI shopping assistant.
@@ -325,6 +354,21 @@ async def startup() -> None:
     global MAIN_LOOP, HTTP_CLIENT
     MAIN_LOOP = asyncio.get_running_loop()
     HTTP_CLIENT = httpx.AsyncClient(timeout=60.0)
+    logger.info("Live backend provider: %s", LIVE_PROVIDER)
+    logger.info("Live backend model: %s", AGENT_MODEL)
+    logger.info("Live backend model source: %s", AGENT_MODEL_SOURCE)
+    if RAW_AGENT_MODEL and RAW_AGENT_MODEL != AGENT_MODEL:
+        logger.info(
+            "Normalized AGENT_MODEL=%s to provider default %s",
+            RAW_AGENT_MODEL,
+            AGENT_MODEL,
+        )
+    if LIVE_USE_VERTEXAI:
+        logger.info("Live backend will use Vertex AI credentials from the environment")
+    elif not LIVE_API_KEY_PRESENT:
+        logger.warning(
+            "Gemini API live backend selected, but GEMINI_API_KEY/GOOGLE_API_KEY is missing"
+        )
 
 
 @app.on_event("shutdown")
@@ -344,7 +388,14 @@ async def root():
 
 @app.get("/health")
 async def health():
-    return {"status": "ok", "search_service_url": SEARCH_SERVICE_URL}
+    return {
+        "status": "ok",
+        "search_service_url": SEARCH_SERVICE_URL,
+        "live_provider": LIVE_PROVIDER,
+        "google_genai_use_vertexai": LIVE_USE_VERTEXAI,
+        "agent_model": AGENT_MODEL,
+        "agent_model_source": AGENT_MODEL_SOURCE,
+    }
 
 
 @app.get("/api/item/{item_id}")

@@ -9,3 +9,9 @@ live backend at this service with the `backend` query parameter.
 via `SEARCH_SERVICE_URL`.
 
 The current workflow is focused on desktop browser testing with `http://127.0.0.1:8000`.
+
+For local desktop testing, prefer Gemini API mode and leave `AGENT_MODEL` unset so the
+server picks the provider-specific default automatically. If local Vertex AI live audio
+is slow but the same deployment is fast on Cloud Run, verify with
+`hosted_app/model_test.py` first and treat that as a provider-path issue rather than a
+UI bug.

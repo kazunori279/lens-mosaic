@@ -15,13 +15,31 @@ cp .env.example .env
 
 Set:
 
-- `GOOGLE_GENAI_USE_VERTEXAI=TRUE`
+- `GOOGLE_GENAI_USE_VERTEXAI=FALSE` for the fastest local desktop loop when you have a
+  `GEMINI_API_KEY` or `GOOGLE_API_KEY`
+- `GOOGLE_GENAI_USE_VERTEXAI=TRUE` only when you specifically want to test the local
+  Vertex AI live path
 - `GOOGLE_CLOUD_PROJECT`
 - `GOOGLE_CLOUD_LOCATION`
 - `SEARCH_SERVICE_URL` to your hosted Cloud Run URL
-- `AGENT_MODEL` if you want to override the default
+- leave `AGENT_MODEL` unset unless you want to override the provider-specific default
 
 This local server only handles the live ADK path. Search and item data come from `SEARCH_SERVICE_URL`.
+
+Before you debug the app server, run the direct model probe once:
+
+```bash
+UV_CACHE_DIR=/tmp/uv-cache uv run --project hosted_app python hosted_app/model_test.py --timeout 60
+```
+
+If that probe shows:
+
+- fast text but very slow or timed-out Vertex audio from your laptop
+- smooth behavior after deploying the same app to Cloud Run
+
+then the bottleneck is the local machine's direct Vertex live connection rather than
+the browser UI or FastAPI app. In that case, use Gemini API for local desktop testing
+or keep the live backend deployed on Cloud Run while you work on the UI.
 
 ## 2. Start the local live server
 

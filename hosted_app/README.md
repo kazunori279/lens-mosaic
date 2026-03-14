@@ -373,6 +373,10 @@ For a Cloud Run deployment:
 
 - If `model_test.py` is already slow, fix the provider/model issue before debugging the
   hosted app server.
+- If `model_test.py` shows fast local text turns but slow or timed-out local Vertex AI
+  audio turns, while the same app is smooth on Cloud Run, treat that as a
+  machine-to-Vertex live path issue rather than a FastAPI/UI regression. For local
+  desktop work, prefer Gemini API mode or keep the live backend deployed on Cloud Run.
 - For the quickest local iteration, prefer `uvicorn` on `127.0.0.1:8081` before moving
   to LAN or Cloud Run testing.
 - If the phone can reach the page but live mode disconnects quickly, check the server
