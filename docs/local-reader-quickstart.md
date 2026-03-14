@@ -45,11 +45,13 @@ Notes:
 - `127.0.0.1` only works when the browser runs on the same machine as the local live server.
 - The hosted UI keeps using the hosted search API even when `backend=` points to your local server.
 - The current local-live workflow is intended for desktop browser testing.
+- If you want to run the hosted app locally instead of Cloud Run, start `hosted_app` on `127.0.0.1:8081` and open `http://127.0.0.1:8081/?backend=http://127.0.0.1:8000`.
 
 ## 4. Quick checks
 
 - `http://127.0.0.1:8000/health`
 - `https://YOUR_SERVICE_URL/health`
+- `curl -X POST http://127.0.0.1:8081/search -H 'content-type: application/json' -d '{"text":"speaker"}'`
 
 ## 5. Expected behavior
 

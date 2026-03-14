@@ -288,8 +288,8 @@ async function startCamera() {
   videoContainer.classList.add("active");
   camOn = true;
 
-  // Send frames every 0.1 seconds
-  camInterval = setInterval(captureAndSend, 100);
+  // Send frames every 1 second
+  camInterval = setInterval(captureAndSend, 1000);
 }
 
 function stopCamera() {
