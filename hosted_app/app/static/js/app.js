@@ -160,6 +160,11 @@ function handleEvent(event) {
   const content = event.content;
   if (content && content.parts) {
     for (const part of content.parts) {
+      // Skip hidden reasoning parts; only render user-facing text content.
+      if (isHiddenThoughtPart(part)) {
+        continue;
+      }
+
       // Text response (skip if output transcription already delivered it)
       if (part.text && !hasOutputTranscription) {
         if (!currentAgentEl) {
@@ -178,6 +183,10 @@ function handleEvent(event) {
       }
     }
   }
+}
+
+function isHiddenThoughtPart(part) {
+  return Boolean(part.thought || part.thoughtSignature);
 }
 
 function cleanCJKSpaces(text) {
