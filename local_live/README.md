@@ -2,10 +2,8 @@
 
 `local_live` is the blog-reader-friendly live API server.
 
-It keeps the ADK live logic local while delegating search to a hosted service via `SEARCH_SERVICE_URL`.
+It does not serve the LensMosaic UI. Readers should open the hosted app and point its
+live backend at this service with the `backend` query parameter.
 
-The intended reader flow is:
-
-1. start `local_live/app/main.py`
-2. open the hosted UI
-3. pass `?backend=http://127.0.0.1:8000` or a LAN URL to the hosted UI
+`local_live` keeps the ADK live logic local while delegating search to a hosted service
+via `SEARCH_SERVICE_URL`.

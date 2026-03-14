@@ -13,8 +13,6 @@ from pathlib import Path
 import httpx
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
-from fastapi.responses import FileResponse
-from fastapi.staticfiles import StaticFiles
 from google.adk.agents import Agent
 from google.adk.agents.live_request_queue import LiveRequestQueue
 from google.adk.agents.run_config import RunConfig, StreamingMode
@@ -28,7 +26,6 @@ load_dotenv(Path(__file__).parent / ".env", override=True)
 SEARCH_SERVICE_URL = os.getenv("SEARCH_SERVICE_URL", "http://localhost:8001")
 
 APP_NAME = "lens-mosaic"
-STATIC_DIR = Path(__file__).parent / "static"
 IMAGE_INTERVAL = 1.0
 HTTP_CLIENT: httpx.AsyncClient | None = None
 
@@ -321,7 +318,6 @@ def is_disconnect_error(exc: RuntimeError) -> bool:
 
 
 app = FastAPI()
-app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
 
 @app.on_event("startup")
@@ -339,7 +335,11 @@ async def shutdown() -> None:
 
 @app.get("/")
 async def root():
-    return FileResponse(STATIC_DIR / "index.html")
+    return {
+        "status": "ok",
+        "service": "local_live",
+        "message": "Use the hosted LensMosaic app for the UI. This service only provides the live backend.",
+    }
 
 
 @app.get("/health")
