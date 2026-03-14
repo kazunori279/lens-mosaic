@@ -48,3 +48,4 @@ The repo has been migrated from the earlier prototype directories and the hosted
 The frontend has also been updated so it can choose separate `searchOrigin` and `liveOrigin` at runtime.
 
 See `docs/architecture-plan.md` for the target architecture and `docs/usage-modes.md` for the runtime model.
+See `docs/deploy-cloud-run.md` for deployment and `docs/local-reader-quickstart.md` for the blog-reader flow.
