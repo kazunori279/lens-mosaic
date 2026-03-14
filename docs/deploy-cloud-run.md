@@ -21,7 +21,7 @@ Set values for:
 - `EMBEDDING_MODEL`
 - `SEARCH_TOP_K`
 - `RANKING_CONFIG`
-- `AGENT_MODEL`
+- `AGENT_MODEL` only if you want to override the provider-specific default
 
 ## 2. Build and deploy
 
@@ -35,8 +35,11 @@ gcloud run deploy lens-mosaic \
   --timeout 3600 \
   --min-instances 1 \
   --max-instances 1 \
-  --set-env-vars GOOGLE_GENAI_USE_VERTEXAI=TRUE,GOOGLE_CLOUD_PROJECT=YOUR_PROJECT_ID,GOOGLE_CLOUD_LOCATION=us-central1,VECTOR_COLLECTION_ID=YOUR_COLLECTION_ID,VECTOR_FIELD=embedding,RANKING_CONFIG=projects/YOUR_PROJECT_ID/locations/global/rankingConfigs/default_ranking_config,AGENT_MODEL=gemini-live-2.5-flash-native-audio
+  --set-env-vars GOOGLE_GENAI_USE_VERTEXAI=TRUE,GOOGLE_CLOUD_PROJECT=YOUR_PROJECT_ID,GOOGLE_CLOUD_LOCATION=us-central1,VECTOR_COLLECTION_ID=YOUR_COLLECTION_ID,VECTOR_FIELD=embedding,RANKING_CONFIG=projects/YOUR_PROJECT_ID/locations/global/rankingConfigs/default_ranking_config
 ```
+
+Leave `AGENT_MODEL` unset if you want the hosted app to switch between the default
+Vertex AI and Gemini API live models just by flipping `GOOGLE_GENAI_USE_VERTEXAI`.
 
 ## 3. Recommended runtime settings
 

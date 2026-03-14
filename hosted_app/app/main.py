@@ -39,6 +39,8 @@ load_dotenv(Path(__file__).parent / ".env", override=True)
 APP_NAME = "lens-mosaic-hosted"
 STATIC_DIR = Path(__file__).parent / "static"
 IMAGE_INTERVAL = 1.0
+DEFAULT_VERTEX_AGENT_MODEL = "gemini-live-2.5-flash-native-audio"
+DEFAULT_GEMINI_AGENT_MODEL = "gemini-2.5-flash-native-audio-preview-12-2025"
 
 PROJECT_ID = os.getenv("GOOGLE_CLOUD_PROJECT", "your-gcp-project-id")
 LOCATION = os.getenv("GOOGLE_CLOUD_LOCATION", "us-central1")
@@ -50,6 +52,33 @@ RANKING_CONFIG = os.getenv(
     f"projects/{PROJECT_ID}/locations/global/rankingConfigs/default_ranking_config",
 )
 SEARCH_TOP_K = int(os.getenv("SEARCH_TOP_K", "100"))
+
+
+def _env_flag(name: str, default: bool = False) -> bool:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
+LIVE_USE_VERTEXAI = _env_flag("GOOGLE_GENAI_USE_VERTEXAI")
+LIVE_PROVIDER = "vertex-ai" if LIVE_USE_VERTEXAI else "gemini-api"
+DEFAULT_AGENT_MODEL = (
+    DEFAULT_VERTEX_AGENT_MODEL if LIVE_USE_VERTEXAI else DEFAULT_GEMINI_AGENT_MODEL
+)
+RAW_AGENT_MODEL = os.getenv("AGENT_MODEL")
+if RAW_AGENT_MODEL in {
+    None,
+    "",
+    DEFAULT_VERTEX_AGENT_MODEL,
+    DEFAULT_GEMINI_AGENT_MODEL,
+}:
+    AGENT_MODEL = DEFAULT_AGENT_MODEL
+    AGENT_MODEL_SOURCE = "provider-default"
+else:
+    AGENT_MODEL = RAW_AGENT_MODEL
+    AGENT_MODEL_SOURCE = "env"
+LIVE_API_KEY_PRESENT = bool(os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY"))
 
 logging.basicConfig(
     level=logging.INFO,
@@ -190,7 +219,7 @@ def _get_item_details(item_id: str) -> dict | None:
 
 agent = Agent(
     name="mm_agent",
-    model=os.getenv("AGENT_MODEL", "gemini-live-2.5-flash-native-audio"),
+    model=AGENT_MODEL,
     tools=[google_search],
     instruction="""\
 You are a helpful AI shopping assistant.
@@ -398,6 +427,21 @@ app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 async def startup() -> None:
     global MAIN_LOOP
     MAIN_LOOP = asyncio.get_running_loop()
+    logger.info("Live backend provider: %s", LIVE_PROVIDER)
+    logger.info("Live backend model: %s", AGENT_MODEL)
+    logger.info("Live backend model source: %s", AGENT_MODEL_SOURCE)
+    if RAW_AGENT_MODEL and RAW_AGENT_MODEL != AGENT_MODEL:
+        logger.info(
+            "Normalized AGENT_MODEL=%s to provider default %s",
+            RAW_AGENT_MODEL,
+            AGENT_MODEL,
+        )
+    if LIVE_USE_VERTEXAI:
+        logger.info("Live backend will use Vertex AI credentials from the environment")
+    elif not LIVE_API_KEY_PRESENT:
+        logger.warning(
+            "Gemini API live backend selected, but GEMINI_API_KEY/GOOGLE_API_KEY is missing"
+        )
 
 
 @app.get("/")
@@ -451,6 +495,10 @@ def health():
         "project_id": PROJECT_ID,
         "collection_id": COLLECTION_ID,
         "live_enabled": True,
+        "live_provider": LIVE_PROVIDER,
+        "google_genai_use_vertexai": LIVE_USE_VERTEXAI,
+        "agent_model": AGENT_MODEL,
+        "agent_model_source": AGENT_MODEL_SOURCE,
     }
 
 

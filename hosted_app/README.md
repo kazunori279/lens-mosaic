@@ -28,6 +28,15 @@ cp .env.example .env
 
 Set the required values in `.env` for your local environment.
 
+`GOOGLE_GENAI_USE_VERTEXAI` now controls the live model backend:
+
+- `TRUE`: use Vertex AI live mode
+- `FALSE`: use Gemini API live mode
+
+Leave `AGENT_MODEL` unset unless you want to pin a specific live model manually.
+When it is unset, the hosted app chooses a provider-appropriate default model based
+on `GOOGLE_GENAI_USE_VERTEXAI`.
+
 ## 2. Run the direct model preflight
 
 Before starting the server, verify that the Live model itself is responding from this
@@ -116,15 +125,14 @@ the local certificate warning explicitly.
 After the HTTPS server is running, you can generate a QR code for the phone URL:
 
 ```bash
-python3 - <<'PY'
-from urllib.parse import quote
-from urllib.request import urlopen
+uv run --with qrcode[pil] python - <<'PY'
 from pathlib import Path
+import qrcode
 
 url = "https://YOUR_LAN_IP:8081/"
-qr_url = f"http://api.qrserver.com/v1/create-qr-code/?size=480x480&data={quote(url, safe='')}"
 out = Path("/tmp/lens-mosaic-hosted-app-mobile-qr.png")
-out.write_bytes(urlopen(qr_url, timeout=20).read())
+img = qrcode.make(url)
+img.save(out)
 print(out)
 print(url)
 PY
