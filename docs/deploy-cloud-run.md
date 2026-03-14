@@ -14,14 +14,10 @@ Use `hosted_app/app/.env.example` as the source of truth for the variables you n
 Set values for:
 
 - `GOOGLE_GENAI_USE_VERTEXAI`
+- `GOOGLE_API_KEY` if you use Gemini API mode
 - `GOOGLE_CLOUD_PROJECT`
 - `GOOGLE_CLOUD_LOCATION`
-- `VECTOR_COLLECTION_ID`
-- `VECTOR_FIELD`
-- `EMBEDDING_MODEL`
-- `SEARCH_TOP_K`
-- `RANKING_CONFIG`
-- `AGENT_MODEL` only if you want to override the provider-specific default
+- `LENS_MOSAIC_COLLECTION_ID`
 
 ## 2. Build and deploy
 
@@ -35,11 +31,11 @@ gcloud run deploy lens-mosaic \
   --timeout 3600 \
   --min-instances 1 \
   --max-instances 1 \
-  --set-env-vars GOOGLE_GENAI_USE_VERTEXAI=TRUE,GOOGLE_CLOUD_PROJECT=YOUR_PROJECT_ID,GOOGLE_CLOUD_LOCATION=us-central1,VECTOR_COLLECTION_ID=YOUR_COLLECTION_ID,VECTOR_FIELD=embedding,RANKING_CONFIG=projects/YOUR_PROJECT_ID/locations/global/rankingConfigs/default_ranking_config
+  --set-env-vars GOOGLE_GENAI_USE_VERTEXAI=TRUE,GOOGLE_CLOUD_PROJECT=YOUR_PROJECT_ID,GOOGLE_CLOUD_LOCATION=us-central1,LENS_MOSAIC_COLLECTION_ID=mercari3m-collection-mm2
 ```
 
-Leave `AGENT_MODEL` unset if you want the hosted app to switch between the default
-Vertex AI and Gemini API live models just by flipping `GOOGLE_GENAI_USE_VERTEXAI`.
+The hosted app switches between the default Vertex AI and Gemini API live models
+based on `GOOGLE_GENAI_USE_VERTEXAI`.
 
 ## 3. Recommended runtime settings
 

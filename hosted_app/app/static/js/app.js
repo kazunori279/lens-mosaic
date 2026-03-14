@@ -642,7 +642,6 @@ class MosaicController {
           lastSeen: Date.now(),
         };
       })
-      .filter((tile) => tile.normalized >= 0.2)
       .slice(0, this.gridSize * this.gridSize);
   }
 

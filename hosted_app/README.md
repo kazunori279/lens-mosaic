@@ -41,11 +41,34 @@ Set the required values in `.env` for your environment.
 - `TRUE`: use Vertex AI live mode
 - `FALSE`: use Gemini API live mode
 
-If you use Gemini API mode, set `GEMINI_API_KEY` or `GOOGLE_API_KEY`.
+If you use Gemini API mode, set `GOOGLE_API_KEY`.
 
-Leave `AGENT_MODEL` unset unless you want to pin a specific live model manually.
-When it is unset, the hosted app chooses a provider-appropriate default model based
-on `GOOGLE_GENAI_USE_VERTEXAI`.
+Set `LENS_MOSAIC_COLLECTION_ID` to the collection you want the hosted app to search.
+The app derives the embedding model and vector fields from that collection ID.
+
+Available datasets:
+
+### mercari3m-collection-mm2 (Gemini Embedding 2 Multimodal)
+
+- **Collection**: `mercari3m-collection-mm2`
+- **ANN Indexes**: `text-emb-index` (text), `image-emb-index` (image)
+- **Dataset ID**: `mercari3m_mm2`
+- **Embedding Model**: `gemini-embedding-2-preview` (BYOE - Bring Your Own Embeddings)
+- **Embedding Dimensions**: `768` (reduced from `3072` default)
+- **Vector Fields**: `text_emb` (from `{name} {description}`), `image_emb` (from product image)
+- **Distance Metric**: `DOT_PRODUCT`
+- **Data Objects**: `882,688` items
+
+### mercari3m-collection-multimodal (Multimodal Embeddings)
+
+- **Collection**: `mercari3m-collection-multimodal`
+- **ANN Index**: `embedding-index`
+- **Dataset ID**: `mercari3m_multimodal`
+- **Embedding Model**: `multimodal-embedding-001` (BYOE - Bring Your Own Embeddings)
+- **Embedding Dimensions**: `1408` (multimodal)
+- **Embedding Source**: `{name} {description}` + product image
+- **Distance Metric**: `DOT_PRODUCT`
+- **Data Objects**: `2,874,425` items
 
 ### 2. Run the direct model preflight
 
@@ -60,47 +83,19 @@ This probe runs:
 
 - a Vertex AI text test
 - a Vertex AI audio test
-- a Gemini API text test, if `GEMINI_API_KEY` or `GOOGLE_API_KEY` is set
-- a Gemini API audio test, if `GEMINI_API_KEY` or `GOOGLE_API_KEY` is set
+- a Gemini API text test, if `GOOGLE_API_KEY` is set
+- a Gemini API audio test, if `GOOGLE_API_KEY` is set
 
 Use this step to separate model/provider latency from app/server latency before
 debugging the app server or browser behavior.
 
 ## Local testing
 
-### 1. Quick local desktop test
+### 1. Local HTTPS test on your LAN
 
-Use this flow when you want to run `hosted_app` on your own machine and open it from
-the same computer.
-
-Start the app locally:
-
-```bash
-cd hosted_app/app
-uv run --project .. uvicorn main:app \
-  --host 127.0.0.1 \
-  --port 8081
-```
-
-Validate it locally:
-
-```bash
-curl http://127.0.0.1:8081/health
-```
-
-Open:
-
-```text
-http://127.0.0.1:8081/
-```
-
-This is the fastest loop for testing the UI, transcript behavior, item detail calls,
-and search endpoints from a desktop browser.
-
-### 2. Local HTTPS phone test on your LAN
-
-Use this flow when you want to run `hosted_app` locally and open it from a phone or
-tablet on the same LAN.
+When you run `hosted_app` locally, serve it over HTTPS on your LAN so the same server
+is reachable from both your desktop browser and smartphones on the same network. Use
+this as the default local workflow instead of a localhost-only server.
 
 If port `8081` is already in use, stop the existing process first:
 
@@ -174,7 +169,25 @@ Verify from your Mac before moving to the phone:
 curl -k "${LENS_MOSAIC_URL}health"
 ```
 
-Open this from your phone:
+Run a basic text search check from your Mac:
+
+```bash
+curl -k -X POST "${LENS_MOSAIC_URL}search" \
+  -H 'Content-Type: application/json' \
+  -d '{"text":"red handbag"}'
+```
+
+Current local image-search latency on `mercari3m-collection-mm2` is roughly:
+
+- warm steady-state total: `1.1s` to `1.35s`
+- embedding generation: about `0.6s` to `0.9s`
+- text vector search: about `0.23s`
+- image vector search: about `0.22s`
+- local RRF fusion: negligible
+
+The first request after startup can be slower, around `1.5s` to `3.6s`.
+
+Open this from your desktop browser or phone:
 
 ```text
 ${LENS_MOSAIC_URL}
@@ -206,21 +219,16 @@ If `uv` cannot write to its default cache, rerun the same command with
 Open `/tmp/lens-mosaic-hosted-app-mobile-qr.png`, show it on your desktop, and let
 the user scan it from their smartphone.
 
-### 3. Local testing checklist
+### 2. Local testing checklist
 
-For a same-machine desktop test:
-
-- `curl http://127.0.0.1:8081/health` succeeds
-- the root URL serves the HTML app
+- `curl -k https://YOUR_LAN_IP:8081/health` succeeds from your Mac
+- `curl -k -X POST https://YOUR_LAN_IP:8081/search ...` returns search results
+- the root URL serves the HTML app on your desktop browser
+- the phone can open the local HTTPS URL
+- the certificate warning can be accepted once in Safari
 - text chat works
 - the transcript panel updates correctly
 - item details open from the mosaic
-
-For a LAN phone test:
-
-- `curl -k https://YOUR_LAN_IP:8081/health` succeeds from your Mac
-- the phone can open the local HTTPS URL
-- the certificate warning can be accepted once in Safari
 - camera permission works
 - microphone permission works
 - the live connection starts and stays connected
@@ -252,7 +260,7 @@ gcloud run deploy lens-mosaic \
   --timeout 3600 \
   --min-instances 1 \
   --max-instances 1 \
-  --set-env-vars GOOGLE_GENAI_USE_VERTEXAI="${GOOGLE_GENAI_USE_VERTEXAI}",GOOGLE_CLOUD_PROJECT="${GOOGLE_CLOUD_PROJECT}",GOOGLE_CLOUD_LOCATION="${GOOGLE_CLOUD_LOCATION}",VECTOR_COLLECTION_ID="${VECTOR_COLLECTION_ID}",VECTOR_FIELD="${VECTOR_FIELD}",EMBEDDING_MODEL="${EMBEDDING_MODEL}",RANKING_CONFIG="${RANKING_CONFIG}",SEARCH_TOP_K="${SEARCH_TOP_K}"
+  --set-env-vars GOOGLE_GENAI_USE_VERTEXAI="${GOOGLE_GENAI_USE_VERTEXAI}",GOOGLE_CLOUD_PROJECT="${GOOGLE_CLOUD_PROJECT}",GOOGLE_CLOUD_LOCATION="${GOOGLE_CLOUD_LOCATION}",LENS_MOSAIC_COLLECTION_ID="${LENS_MOSAIC_COLLECTION_ID}"
 ```
 
 If you are deploying in Gemini API mode, include whichever API key variable you use
@@ -269,14 +277,11 @@ gcloud run deploy lens-mosaic \
   --timeout 3600 \
   --min-instances 1 \
   --max-instances 1 \
-  --set-env-vars GOOGLE_GENAI_USE_VERTEXAI="${GOOGLE_GENAI_USE_VERTEXAI}",GEMINI_API_KEY="${GEMINI_API_KEY}",GOOGLE_CLOUD_PROJECT="${GOOGLE_CLOUD_PROJECT}",GOOGLE_CLOUD_LOCATION="${GOOGLE_CLOUD_LOCATION}",VECTOR_COLLECTION_ID="${VECTOR_COLLECTION_ID}",VECTOR_FIELD="${VECTOR_FIELD}",EMBEDDING_MODEL="${EMBEDDING_MODEL}",RANKING_CONFIG="${RANKING_CONFIG}",SEARCH_TOP_K="${SEARCH_TOP_K}"
+  --set-env-vars GOOGLE_GENAI_USE_VERTEXAI="${GOOGLE_GENAI_USE_VERTEXAI}",GOOGLE_API_KEY="${GOOGLE_API_KEY}",GOOGLE_CLOUD_PROJECT="${GOOGLE_CLOUD_PROJECT}",GOOGLE_CLOUD_LOCATION="${GOOGLE_CLOUD_LOCATION}",LENS_MOSAIC_COLLECTION_ID="${LENS_MOSAIC_COLLECTION_ID}"
 ```
 
-If you use `GOOGLE_API_KEY` instead of `GEMINI_API_KEY`, swap that variable into the
-same `--set-env-vars` list.
-
-If you want to override the provider-specific default live model, also add
-`AGENT_MODEL="${AGENT_MODEL}"` to `--set-env-vars`.
+Older env files may still use `GEMINI_API_KEY`, but `GOOGLE_API_KEY` is the primary
+variable going forward.
 
 Recommended runtime settings:
 
@@ -318,6 +323,14 @@ Check health with a `GET` request:
 
 ```bash
 curl "$(gcloud run services describe lens-mosaic --project "${GOOGLE_CLOUD_PROJECT}" --region "${GOOGLE_CLOUD_LOCATION}" --format='value(status.url)')/health"
+```
+
+Check search with a text query:
+
+```bash
+curl -X POST "$(gcloud run services describe lens-mosaic --project "${GOOGLE_CLOUD_PROJECT}" --region "${GOOGLE_CLOUD_LOCATION}" --format='value(status.url)')/search" \
+  -H 'Content-Type: application/json' \
+  -d '{"text":"red handbag"}'
 ```
 
 Open the app:
@@ -377,8 +390,8 @@ For a Cloud Run deployment:
   audio turns, while the same app is smooth on Cloud Run, treat that as a
   machine-to-Vertex live path issue rather than a FastAPI/UI regression. For local
   desktop work, prefer Gemini API mode or keep the live backend deployed on Cloud Run.
-- For the quickest local iteration, prefer `uvicorn` on `127.0.0.1:8081` before moving
-  to LAN or Cloud Run testing.
+- For local iteration, prefer the LAN HTTPS flow so the same server stays reachable
+  from both your desktop browser and your phone.
 - If the phone can reach the page but live mode disconnects quickly, check the server
   log separately from the basic LAN/HTTPS setup. A page load proves the LAN path is
   working.

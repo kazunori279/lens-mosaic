@@ -388,7 +388,7 @@ def build_provider_configs(
     except Exception as exc:
         skipped.append(f"vertexai skipped: {exc}")
 
-    gemini_api_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
+    gemini_api_key = os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY")
     if gemini_api_key:
         providers.append(
             ProviderConfig(
@@ -398,7 +398,7 @@ def build_provider_configs(
             )
         )
     else:
-        skipped.append("gemini-api skipped: GEMINI_API_KEY or GOOGLE_API_KEY is missing")
+        skipped.append("gemini-api skipped: GOOGLE_API_KEY is missing")
 
     return providers, skipped
 

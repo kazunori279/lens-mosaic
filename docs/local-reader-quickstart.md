@@ -16,13 +16,12 @@ cp .env.example .env
 Set:
 
 - `GOOGLE_GENAI_USE_VERTEXAI=FALSE` for the fastest local desktop loop when you have a
-  `GEMINI_API_KEY` or `GOOGLE_API_KEY`
+  `GOOGLE_API_KEY`
 - `GOOGLE_GENAI_USE_VERTEXAI=TRUE` only when you specifically want to test the local
   Vertex AI live path
 - `GOOGLE_CLOUD_PROJECT`
 - `GOOGLE_CLOUD_LOCATION`
 - `SEARCH_SERVICE_URL` to your hosted Cloud Run URL
-- leave `AGENT_MODEL` unset unless you want to override the provider-specific default
 
 This local server only handles the live ADK path. Search and item data come from `SEARCH_SERVICE_URL`.
 

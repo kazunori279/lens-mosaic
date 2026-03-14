@@ -56,7 +56,7 @@ if RAW_AGENT_MODEL in {
 else:
     AGENT_MODEL = RAW_AGENT_MODEL
     AGENT_MODEL_SOURCE = "env"
-LIVE_API_KEY_PRESENT = bool(os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY"))
+LIVE_API_KEY_PRESENT = bool(os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY"))
 
 logging.basicConfig(
     level=logging.DEBUG,
@@ -367,7 +367,7 @@ async def startup() -> None:
         logger.info("Live backend will use Vertex AI credentials from the environment")
     elif not LIVE_API_KEY_PRESENT:
         logger.warning(
-            "Gemini API live backend selected, but GEMINI_API_KEY/GOOGLE_API_KEY is missing"
+            "Gemini API live backend selected, but GOOGLE_API_KEY is missing"
         )
 
 

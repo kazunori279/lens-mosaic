@@ -16,6 +16,8 @@ import logging
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
+from time import perf_counter
+from typing import Literal
 
 import vertexai
 from dotenv import load_dotenv
@@ -28,6 +30,7 @@ from google.adk.agents.run_config import RunConfig, StreamingMode
 from google.adk.runners import Runner
 from google.adk.sessions import InMemorySessionService
 from google.adk.tools import ToolContext, google_search
+from google import genai
 from google.cloud import discoveryengine_v1 as discoveryengine
 from google.cloud import vectorsearch_v1beta
 from google.genai import types
@@ -44,14 +47,57 @@ DEFAULT_GEMINI_AGENT_MODEL = "gemini-2.5-flash-native-audio-preview-12-2025"
 
 PROJECT_ID = os.getenv("GOOGLE_CLOUD_PROJECT", "your-gcp-project-id")
 LOCATION = os.getenv("GOOGLE_CLOUD_LOCATION", "us-central1")
-COLLECTION_ID = os.getenv("VECTOR_COLLECTION_ID", "your-vector-search-collection")
-VECTOR_FIELD = os.getenv("VECTOR_FIELD", "embedding")
-EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "multimodalembedding@001")
-RANKING_CONFIG = os.getenv(
-    "RANKING_CONFIG",
-    f"projects/{PROJECT_ID}/locations/global/rankingConfigs/default_ranking_config",
+RANKING_CONFIG = (
+    f"projects/{PROJECT_ID}/locations/global/rankingConfigs/default_ranking_config"
 )
-SEARCH_TOP_K = int(os.getenv("SEARCH_TOP_K", "100"))
+SEARCH_TOP_K = 100
+COLLECTION_ID = os.getenv("LENS_MOSAIC_COLLECTION_ID", "mercari3m-collection-mm2")
+DEFAULT_IMAGE_MIME_TYPE = "image/jpeg"
+RRF_K = 60.0
+
+
+EmbeddingBackend = Literal["legacy-multimodal", "gemini-embedding-2"]
+
+
+@dataclass(frozen=True)
+class CollectionConfig:
+    collection_id: str
+    dataset_id: str
+    embedding_backend: EmbeddingBackend
+    embedding_model: str
+    text_vector_field: str
+    image_vector_field: str
+    output_dimensionality: int | None = None
+
+
+SUPPORTED_COLLECTIONS: dict[str, CollectionConfig] = {
+    "mercari3m-collection-mm2": CollectionConfig(
+        collection_id="mercari3m-collection-mm2",
+        dataset_id="mercari3m_mm2",
+        embedding_backend="gemini-embedding-2",
+        embedding_model="gemini-embedding-2-preview",
+        text_vector_field="text_emb",
+        image_vector_field="image_emb",
+        output_dimensionality=768,
+    ),
+    "mercari3m-collection-multimodal": CollectionConfig(
+        collection_id="mercari3m-collection-multimodal",
+        dataset_id="mercari3m_multimodal",
+        embedding_backend="legacy-multimodal",
+        embedding_model="multimodalembedding@001",
+        text_vector_field="embedding",
+        image_vector_field="embedding",
+    ),
+}
+
+try:
+    ACTIVE_COLLECTION = SUPPORTED_COLLECTIONS[COLLECTION_ID]
+except KeyError as exc:
+    supported = ", ".join(sorted(SUPPORTED_COLLECTIONS))
+    raise RuntimeError(
+        "Unsupported LENS_MOSAIC_COLLECTION_ID "
+        f"{COLLECTION_ID!r}. Supported values: {supported}"
+    ) from exc
 
 
 def _env_flag(name: str, default: bool = False) -> bool:
@@ -63,22 +109,10 @@ def _env_flag(name: str, default: bool = False) -> bool:
 
 LIVE_USE_VERTEXAI = _env_flag("GOOGLE_GENAI_USE_VERTEXAI")
 LIVE_PROVIDER = "vertex-ai" if LIVE_USE_VERTEXAI else "gemini-api"
-DEFAULT_AGENT_MODEL = (
+AGENT_MODEL = (
     DEFAULT_VERTEX_AGENT_MODEL if LIVE_USE_VERTEXAI else DEFAULT_GEMINI_AGENT_MODEL
 )
-RAW_AGENT_MODEL = os.getenv("AGENT_MODEL")
-if RAW_AGENT_MODEL in {
-    None,
-    "",
-    DEFAULT_VERTEX_AGENT_MODEL,
-    DEFAULT_GEMINI_AGENT_MODEL,
-}:
-    AGENT_MODEL = DEFAULT_AGENT_MODEL
-    AGENT_MODEL_SOURCE = "provider-default"
-else:
-    AGENT_MODEL = RAW_AGENT_MODEL
-    AGENT_MODEL_SOURCE = "env"
-LIVE_API_KEY_PRESENT = bool(os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY"))
+LIVE_API_KEY_PRESENT = bool(os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY"))
 
 logging.basicConfig(
     level=logging.INFO,
@@ -87,7 +121,18 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 vertexai.init(project=PROJECT_ID, location=LOCATION)
-mm_model = MultiModalEmbeddingModel.from_pretrained(EMBEDDING_MODEL)
+legacy_mm_model: MultiModalEmbeddingModel | None = None
+embedding_client: genai.Client | None = None
+if ACTIVE_COLLECTION.embedding_backend == "legacy-multimodal":
+    legacy_mm_model = MultiModalEmbeddingModel.from_pretrained(
+        ACTIVE_COLLECTION.embedding_model
+    )
+else:
+    embedding_client = genai.Client(
+        vertexai=True,
+        project=PROJECT_ID,
+        location=LOCATION,
+    )
 search_client = vectorsearch_v1beta.DataObjectSearchServiceClient()
 data_client = vectorsearch_v1beta.DataObjectServiceClient()
 rank_client = discoveryengine.RankServiceClient()
@@ -123,28 +168,141 @@ def _collection_path() -> str:
     return f"projects/{PROJECT_ID}/locations/{LOCATION}/collections/{COLLECTION_ID}"
 
 
-def _generate_multimodal_embedding(
+def _search_result_to_dict(result: vectorsearch_v1beta.SearchResult) -> dict | None:
+    obj = result.data_object
+    if obj is None:
+        return None
+    item_id = obj.name.split("/")[-1]
+    data = obj.data
+    if data is None:
+        logger.warning("Skipping search result with missing data for item %s", item_id)
+        return None
+    return {
+        "id": item_id,
+        "name": data.get("name", ""),
+        "description": data.get("description", ""),
+        "score": result.distance,
+    }
+
+
+def _embed_with_legacy_multimodal(
     text: str | None = None,
     image: bytes | None = None,
 ) -> list[float]:
-    """Generate an embedding from text or image input."""
+    """Generate a legacy multimodal embedding from text or image input."""
+    if legacy_mm_model is None:
+        raise RuntimeError("Legacy multimodal embedding model is not configured")
     if text is not None:
-        emb = mm_model.get_embeddings(contextual_text=text)
+        emb = legacy_mm_model.get_embeddings(contextual_text=text)
         return emb.text_embedding
-    emb = mm_model.get_embeddings(image=Image(image_bytes=image))
+    emb = legacy_mm_model.get_embeddings(image=Image(image_bytes=image))
     return emb.image_embedding
 
 
-def _multimodal_search(
+def _embed_with_gemini_embedding_2(
+    text: str | None = None,
+    image: bytes | None = None,
+) -> list[float]:
+    """Generate a Gemini Embedding 2 vector from text or image input."""
+    if embedding_client is None:
+        raise RuntimeError("Gemini embedding client is not configured")
+
+    contents: str | types.Part
+    if text is not None:
+        contents = text
+    else:
+        contents = types.Part.from_bytes(data=image, mime_type=DEFAULT_IMAGE_MIME_TYPE)
+
+    config = types.EmbedContentConfig(
+        output_dimensionality=ACTIVE_COLLECTION.output_dimensionality
+    )
+    response = embedding_client.models.embed_content(
+        model=ACTIVE_COLLECTION.embedding_model,
+        contents=contents,
+        config=config,
+    )
+    if not response.embeddings:
+        raise RuntimeError("Gemini embedding request returned no embeddings")
+    return list(response.embeddings[0].values)
+
+
+def _generate_query_embedding(
+    text: str | None = None,
+    image: bytes | None = None,
+) -> tuple[str, list[float], float]:
+    """Generate the collection-appropriate query embedding and target field."""
+    if text is not None:
+        vector_field = ACTIVE_COLLECTION.text_vector_field
+    elif image is not None:
+        vector_field = ACTIVE_COLLECTION.image_vector_field
+    else:
+        raise ValueError("Either text or image must be provided for embedding")
+
+    started_at = perf_counter()
+    if ACTIVE_COLLECTION.embedding_backend == "legacy-multimodal":
+        embedding = _embed_with_legacy_multimodal(text=text, image=image)
+    else:
+        embedding = _embed_with_gemini_embedding_2(text=text, image=image)
+    embed_ms = (perf_counter() - started_at) * 1000
+    return vector_field, embedding, embed_ms
+
+
+def _collection_search(
     text: str | None = None,
     image: bytes | None = None,
 ) -> list[dict]:
-    """Search the multimodal collection by text or image."""
-    embedding = _generate_multimodal_embedding(text=text, image=image)
+    """Search the active collection by text or image."""
+    started_at = perf_counter()
+    source = "text" if text is not None else "image"
+    if ACTIVE_COLLECTION.embedding_backend == "gemini-embedding-2":
+        (
+            results,
+            embed_ms,
+            text_search_ms,
+            image_search_ms,
+            rrf_ms,
+            rerank_ms,
+        ) = _hybrid_collection_search(text=text, image=image)
+        total_ms = (perf_counter() - started_at) * 1000
+        logger.info(
+            "Search latency: backend=gemini-embedding-2 source=%s embed_ms=%.1f "
+            "text_search_ms=%.1f image_search_ms=%.1f rrf_ms=%.1f rerank_ms=%.1f "
+            "total_ms=%.1f results=%d",
+            source,
+            embed_ms,
+            text_search_ms,
+            image_search_ms,
+            rrf_ms,
+            rerank_ms,
+            total_ms,
+            len(results),
+        )
+        return results
+    results, embed_ms, vector_search_ms = _single_vector_search(text=text, image=image)
+    total_ms = (perf_counter() - started_at) * 1000
+    logger.info(
+        "Search latency: backend=legacy-multimodal source=%s embed_ms=%.1f "
+        "vector_search_ms=%.1f total_ms=%.1f results=%d",
+        source,
+        embed_ms,
+        vector_search_ms,
+        total_ms,
+        len(results),
+    )
+    return results
+
+
+def _single_vector_search(
+    text: str | None = None,
+    image: bytes | None = None,
+) -> tuple[list[dict], float, float]:
+    """Run a single vector search against the active collection."""
+    vector_field, embedding, embed_ms = _generate_query_embedding(text=text, image=image)
+    search_started_at = perf_counter()
     request = vectorsearch_v1beta.SearchDataObjectsRequest(
         parent=_collection_path(),
         vector_search=vectorsearch_v1beta.VectorSearch(
-            search_field=VECTOR_FIELD,
+            search_field=vector_field,
             vector=vectorsearch_v1beta.DenseVector(values=embedding),
             top_k=SEARCH_TOP_K,
             output_fields=vectorsearch_v1beta.OutputFields(
@@ -153,20 +311,95 @@ def _multimodal_search(
         ),
     )
     response = search_client.search_data_objects(request)
-
-    results = []
+    items: list[dict] = []
     for result in response:
-        obj = result.data_object
-        item_id = obj.name.split("/")[-1]
-        results.append(
-            {
-                "id": item_id,
-                "name": obj.data.get("name", ""),
-                "description": obj.data.get("description", ""),
-                "score": result.distance,
-            }
-        )
-    return results
+        item = _search_result_to_dict(result)
+        if item is not None:
+            items.append(item)
+    vector_search_ms = (perf_counter() - search_started_at) * 1000
+    return items, embed_ms, vector_search_ms
+
+
+def _vector_search_by_field(
+    vector_field: str,
+    embedding: list[float],
+) -> tuple[list[dict], float]:
+    """Run one vector search against a specific field and keep inline data only."""
+    started_at = perf_counter()
+    request = vectorsearch_v1beta.SearchDataObjectsRequest(
+        parent=_collection_path(),
+        vector_search=vectorsearch_v1beta.VectorSearch(
+            search_field=vector_field,
+            vector=vectorsearch_v1beta.DenseVector(values=embedding),
+            top_k=SEARCH_TOP_K,
+            output_fields=vectorsearch_v1beta.OutputFields(
+                data_fields=["name", "description"]
+            ),
+        ),
+    )
+    response = search_client.search_data_objects(request)
+    items: list[dict] = []
+    for result in response:
+        item = _search_result_to_dict(result)
+        if item is not None:
+            items.append(item)
+    return items, (perf_counter() - started_at) * 1000
+
+
+def _rrf_fuse_results(result_sets: list[list[dict]]) -> list[dict]:
+    """Fuse ranked result lists with Reciprocal Rank Fusion."""
+    fused: dict[str, dict] = {}
+    for result_set in result_sets:
+        for rank, item in enumerate(result_set, start=1):
+            existing = fused.get(item["id"])
+            rrf_score = 1.0 / (RRF_K + rank)
+            if existing is None:
+                fused[item["id"]] = {
+                    "id": item["id"],
+                    "name": item["name"],
+                    "description": item["description"],
+                    "score": rrf_score,
+                }
+                continue
+            existing["score"] += rrf_score
+            if not existing["name"] and item["name"]:
+                existing["name"] = item["name"]
+            if not existing["description"] and item["description"]:
+                existing["description"] = item["description"]
+
+    return sorted(fused.values(), key=lambda item: item["score"], reverse=True)[
+        :SEARCH_TOP_K
+    ]
+
+
+def _hybrid_collection_search(
+    text: str | None = None,
+    image: bytes | None = None,
+) -> tuple[list[dict], float, float, float, float, float]:
+    """Search Gemini Embedding 2 collections across text and image vectors via RRF."""
+    _, embedding, embed_ms = _generate_query_embedding(text=text, image=image)
+    text_results, text_search_ms = _vector_search_by_field(
+        ACTIVE_COLLECTION.text_vector_field,
+        embedding,
+    )
+    image_results, image_search_ms = _vector_search_by_field(
+        ACTIVE_COLLECTION.image_vector_field,
+        embedding,
+    )
+    rrf_started_at = perf_counter()
+    fused_results = _rrf_fuse_results([text_results, image_results])
+    rrf_ms = (perf_counter() - rrf_started_at) * 1000
+    rerank_started_at = perf_counter()
+    ranked_results = _rank_results(text or "", fused_results)
+    rerank_ms = (perf_counter() - rerank_started_at) * 1000
+    return (
+        ranked_results,
+        embed_ms,
+        text_search_ms,
+        image_search_ms,
+        rrf_ms,
+        rerank_ms,
+    )
 
 
 def _rank_results(query: str, results: list[dict]) -> list[dict]:
@@ -325,7 +558,7 @@ def cleanup(user_id: str, session: UserSession) -> None:
 def search_text_queries_sync(queries: list[str]) -> list[dict]:
     seen, items = set(), []
     for query in queries:
-        for item in _multimodal_search(text=query):
+        for item in _collection_search(text=query):
             if item["id"] not in seen:
                 seen.add(item["id"])
                 items.append(item)
@@ -339,7 +572,7 @@ async def run_similar_search(session: UserSession) -> None:
         if not session.latest_image:
             continue
         try:
-            session.similar = _multimodal_search(image=session.latest_image)
+            session.similar = _collection_search(image=session.latest_image)
             await session.send({"kind": "similar", "items": session.similar})
         except Exception as exc:
             logger.error("Search error for %s: %s", session.user_id, exc, exc_info=True)
@@ -427,20 +660,17 @@ app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 async def startup() -> None:
     global MAIN_LOOP
     MAIN_LOOP = asyncio.get_running_loop()
+    logger.info("Search collection: %s", ACTIVE_COLLECTION.collection_id)
+    logger.info("Search dataset: %s", ACTIVE_COLLECTION.dataset_id)
+    logger.info("Search embedding backend: %s", ACTIVE_COLLECTION.embedding_backend)
+    logger.info("Search embedding model: %s", ACTIVE_COLLECTION.embedding_model)
     logger.info("Live backend provider: %s", LIVE_PROVIDER)
     logger.info("Live backend model: %s", AGENT_MODEL)
-    logger.info("Live backend model source: %s", AGENT_MODEL_SOURCE)
-    if RAW_AGENT_MODEL and RAW_AGENT_MODEL != AGENT_MODEL:
-        logger.info(
-            "Normalized AGENT_MODEL=%s to provider default %s",
-            RAW_AGENT_MODEL,
-            AGENT_MODEL,
-        )
     if LIVE_USE_VERTEXAI:
         logger.info("Live backend will use Vertex AI credentials from the environment")
     elif not LIVE_API_KEY_PRESENT:
         logger.warning(
-            "Gemini API live backend selected, but GEMINI_API_KEY/GOOGLE_API_KEY is missing"
+            "Gemini API live backend selected, but GOOGLE_API_KEY is missing"
         )
 
 
@@ -462,7 +692,7 @@ def search_endpoint(req: SearchRequest):
         image_bytes = base64.b64decode(req.image_base64)
 
     logger.info("Search request: text=%s, has_image=%s", req.text, bool(image_bytes))
-    return _multimodal_search(text=req.text, image=image_bytes)
+    return _collection_search(text=req.text, image=image_bytes)
 
 
 @app.post("/rank", response_model=list[SearchResult])
@@ -494,11 +724,13 @@ def health():
         "status": "ok",
         "project_id": PROJECT_ID,
         "collection_id": COLLECTION_ID,
+        "dataset_id": ACTIVE_COLLECTION.dataset_id,
+        "embedding_backend": ACTIVE_COLLECTION.embedding_backend,
+        "embedding_model": ACTIVE_COLLECTION.embedding_model,
         "live_enabled": True,
         "live_provider": LIVE_PROVIDER,
         "google_genai_use_vertexai": LIVE_USE_VERTEXAI,
         "agent_model": AGENT_MODEL,
-        "agent_model_source": AGENT_MODEL_SOURCE,
     }
 
 
