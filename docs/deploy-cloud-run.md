@@ -68,9 +68,3 @@ For the blog-reader mode, open:
 ```text
 https://YOUR_SERVICE_URL/?backend=http://127.0.0.1:8000
 ```
-
-or a LAN HTTPS backend for mobile devices:
-
-```text
-https://YOUR_SERVICE_URL/?backend=https://YOUR_LAN_IP:8000
-```

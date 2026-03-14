@@ -23,8 +23,7 @@ lens-mosaic/
 │       └── static/
 ├── local_live/
 │   └── app/
-│       ├── main.py
-│       └── certs/
+│       └── main.py
 ├── docs/
 └── README.md
 ```
@@ -41,7 +40,7 @@ lens-mosaic/
 
 - Stays focused on the live ADK server used in the blog post
 - Uses the hosted search service instead of local Vector Search setup
-- Keeps local HTTPS support for camera and microphone testing
+- Targets desktop-browser testing with the hosted UI
 
 ## Refactor Steps
 

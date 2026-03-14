@@ -25,25 +25,12 @@ This local server only handles the live ADK path. Search and item data come from
 
 ## 2. Start the local live server
 
-Desktop-only HTTP:
+Desktop HTTP:
 
 ```bash
 cd local_live/app
 uv run --project .. uvicorn main:app --host 0.0.0.0 --port 8000
 ```
-
-HTTPS for phone or tablet testing:
-
-```bash
-cd local_live/app
-uv run --project .. uvicorn main:app \
-  --host 0.0.0.0 \
-  --port 8000 \
-  --ssl-keyfile certs/lan-key.pem \
-  --ssl-certfile certs/lan-cert.pem
-```
-
-Use the HTTPS form for phone or tablet testing. Safari on iPad/iPhone will usually require you to accept the local certificate warning before the page can access camera and microphone.
 
 ## 3. Open the hosted UI
 
@@ -53,21 +40,15 @@ Desktop localhost example:
 https://YOUR_SERVICE_URL/?backend=http://127.0.0.1:8000
 ```
 
-LAN example for phone or tablet:
-
-```text
-https://YOUR_SERVICE_URL/?backend=https://YOUR_LAN_IP:8000
-```
-
 Notes:
 
 - `127.0.0.1` only works when the browser runs on the same machine as the local live server.
-- Phones and tablets should use the laptop's LAN IP, such as `192.168.1.10`.
 - The hosted UI keeps using the hosted search API even when `backend=` points to your local server.
+- The current local-live workflow is intended for desktop browser testing.
 
 ## 4. Quick checks
 
-- `http://127.0.0.1:8000/health` or `https://YOUR_LAN_IP:8000/health`
+- `http://127.0.0.1:8000/health`
 - `https://YOUR_SERVICE_URL/health`
 
 ## 5. Expected behavior

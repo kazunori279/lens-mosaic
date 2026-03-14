@@ -29,7 +29,7 @@ The browser uses:
 - Agent-triggered `find_items(...)` flows from speech and image context
 - Hosted demo mode
 - Hosted UI plus local live backend mode
-- Desktop and LAN-based phone/tablet testing when the local live server is started with HTTPS
+- Desktop browser testing with the hosted UI and a local live backend
 
 ## Repository Layout
 
@@ -45,6 +45,7 @@ lens-mosaic/
 ## Start Here
 
 - [Local reader quickstart](/Users/kaz/Documents/GitHub/lens-mosaic/docs/local-reader-quickstart.md)
+- [Hosted app mobile quickstart](/Users/kaz/Documents/GitHub/lens-mosaic/docs/hosted-app-mobile-quickstart.md)
 - [Cloud Run deployment](/Users/kaz/Documents/GitHub/lens-mosaic/docs/deploy-cloud-run.md)
 - [Usage modes](/Users/kaz/Documents/GitHub/lens-mosaic/docs/usage-modes.md)
 - [Architecture notes](/Users/kaz/Documents/GitHub/lens-mosaic/docs/architecture-plan.md)

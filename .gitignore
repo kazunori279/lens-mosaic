@@ -4,3 +4,7 @@
 __pycache__/
 *.pyc
 server.log
+local_live/app/certs/
+hosted_app/app/certs/*.pem
+hosted_app/app/certs/*.key
+hosted_app/app/certs/*.crt
