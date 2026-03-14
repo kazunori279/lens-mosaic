@@ -57,12 +57,34 @@ async def search_api(
     return resp.json()
 
 
+def search_api_sync(text: str | None = None, image: bytes | None = None) -> list[dict]:
+    """Synchronous search helper for tool execution."""
+    payload = {}
+    if text:
+        payload["text"] = text
+    if image:
+        payload["image_base64"] = base64.b64encode(image).decode()
+    with httpx.Client(timeout=60.0) as client:
+        resp = client.post(f"{SEARCH_SERVICE_URL}/search", json=payload)
+        resp.raise_for_status()
+        return resp.json()
+
+
 async def rank_api(query: str, results: list[dict]) -> list[dict]:
     """Re-rank results via the search service API."""
     payload = {"query": query, "results": results}
     resp = await HTTP_CLIENT.post(f"{SEARCH_SERVICE_URL}/rank", json=payload)
     resp.raise_for_status()
     return resp.json()
+
+
+def rank_api_sync(query: str, results: list[dict]) -> list[dict]:
+    """Synchronous re-rank helper for tool execution."""
+    payload = {"query": query, "results": results}
+    with httpx.Client(timeout=60.0) as client:
+        resp = client.post(f"{SEARCH_SERVICE_URL}/rank", json=payload)
+        resp.raise_for_status()
+        return resp.json()
 
 
 async def get_item_api(item_id: str) -> dict | None:
@@ -191,6 +213,16 @@ async def search_text_queries(queries: list[str]) -> list[dict]:
     return await rank_api(" ".join(queries), items)
 
 
+def search_text_queries_sync(queries: list[str]) -> list[dict]:
+    seen, items = set(), []
+    for query in queries:
+        for item in search_api_sync(text=query):
+            if item["id"] not in seen:
+                seen.add(item["id"])
+                items.append(item)
+    return rank_api_sync(" ".join(queries), items)
+
+
 async def run_similar_search(session: UserSession) -> None:
     # Turn camera frames into "similar items" in the background.
     while True:
@@ -216,11 +248,8 @@ def find_items(queries: list[str], tool_context: ToolContext) -> str:
         A short comma-separated summary of the top matching item names.
     """
     session = session_for(tool_context.session.user_id)
+    session.recommended = search_text_queries_sync(queries)
     if MAIN_LOOP:
-        future = asyncio.run_coroutine_threadsafe(
-            search_text_queries(queries), MAIN_LOOP
-        )
-        session.recommended = future.result()
         asyncio.run_coroutine_threadsafe(
             session.send({"kind": "recommended", "items": session.recommended}),
             MAIN_LOOP,

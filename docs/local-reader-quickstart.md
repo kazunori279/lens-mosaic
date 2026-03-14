@@ -15,6 +15,9 @@ cp .env.example .env
 
 Set:
 
+- `GOOGLE_GENAI_USE_VERTEXAI=TRUE`
+- `GOOGLE_CLOUD_PROJECT`
+- `GOOGLE_CLOUD_LOCATION`
 - `SEARCH_SERVICE_URL` to your hosted Cloud Run URL
 - `AGENT_MODEL` if you want to override the default
 

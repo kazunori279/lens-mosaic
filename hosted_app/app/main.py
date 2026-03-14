@@ -40,8 +40,8 @@ APP_NAME = "lens-mosaic-hosted"
 STATIC_DIR = Path(__file__).parent / "static"
 IMAGE_INTERVAL = 1.0
 
-PROJECT_ID = os.getenv("VERTEX_PROJECT_ID", "your-gcp-project-id")
-LOCATION = os.getenv("VERTEX_LOCATION", "us-central1")
+PROJECT_ID = os.getenv("GOOGLE_CLOUD_PROJECT", "your-gcp-project-id")
+LOCATION = os.getenv("GOOGLE_CLOUD_LOCATION", "us-central1")
 COLLECTION_ID = os.getenv("VECTOR_COLLECTION_ID", "your-vector-search-collection")
 VECTOR_FIELD = os.getenv("VECTOR_FIELD", "embedding")
 EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "multimodalembedding@001")
@@ -293,7 +293,7 @@ def cleanup(user_id: str, session: UserSession) -> None:
     logger.info("Cleaned up session for %s", user_id)
 
 
-async def search_text_queries(queries: list[str]) -> list[dict]:
+def search_text_queries_sync(queries: list[str]) -> list[dict]:
     seen, items = set(), []
     for query in queries:
         for item in _multimodal_search(text=query):
@@ -319,11 +319,8 @@ async def run_similar_search(session: UserSession) -> None:
 def find_items(queries: list[str], tool_context: ToolContext) -> str:
     """Find product matches from text queries and publish them to the UI."""
     session = session_for(tool_context.session.user_id)
+    session.recommended = search_text_queries_sync(queries)
     if MAIN_LOOP:
-        future = asyncio.run_coroutine_threadsafe(
-            search_text_queries(queries), MAIN_LOOP
-        )
-        session.recommended = future.result()
         asyncio.run_coroutine_threadsafe(
             session.send({"kind": "recommended", "items": session.recommended}),
             MAIN_LOOP,
