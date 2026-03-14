@@ -56,7 +56,30 @@ https://YOUR_LAN_IP:8081/
 Your browser may ask you to accept the local certificate warning before camera and
 microphone access works.
 
-## 5. Quick checks
+Before using the QR code, open the URL directly in Safari once so you can accept the
+certificate warning explicitly.
 
-- `https://YOUR_LAN_IP:8081/health`
+## 5. Generate a QR code
+
+```bash
+python3 - <<'PY'
+from urllib.parse import quote
+from urllib.request import urlopen
+from pathlib import Path
+
+url = "https://YOUR_LAN_IP:8081/"
+qr_url = f"http://api.qrserver.com/v1/create-qr-code/?size=480x480&data={quote(url, safe='')}"
+out = Path("/tmp/lens-mosaic-hosted-app-mobile-qr.png")
+out.write_bytes(urlopen(qr_url, timeout=20).read())
+print(out)
+print(url)
+PY
+```
+
+Open the generated PNG at `/tmp/lens-mosaic-hosted-app-mobile-qr.png` and scan it on
+your phone.
+
+## 6. Quick checks
+
+- `curl -k https://YOUR_LAN_IP:8081/health`
 - `https://YOUR_LAN_IP:8081/`
