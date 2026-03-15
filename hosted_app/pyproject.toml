@@ -1,7 +1,7 @@
 [project]
 name = "advent-mm2-vs2"
 version = "0.1.0"
-description = "Search service using Vector Search 2.0 with multimodal embeddings"
+description = "Search service using Vector Search 2.0 with Gemini Embedding 2"
 requires-python = ">=3.10"
 
 dependencies = [

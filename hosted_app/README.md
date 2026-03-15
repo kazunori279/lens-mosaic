@@ -44,8 +44,9 @@ Set the required values in `.env` for your environment.
 
 If you use Gemini API mode, set `GOOGLE_API_KEY`.
 
-Set `LENS_MOSAIC_COLLECTION_ID` to the collection you want the hosted app to search.
-The app derives the embedding model and vector fields from that collection ID.
+Set `LENS_MOSAIC_COLLECTION_ID=mercari3m-collection-mm2`.
+The hosted app now supports only the Gemini Embedding collection and derives the
+vector fields from that collection ID.
 
 If you run these commands in Codex or another sandboxed environment, set:
 
@@ -56,9 +57,9 @@ export UV_CACHE_DIR=/tmp/uv-cache
 That prevents `uv` from failing when it cannot write to its default cache
 directory.
 
-Available datasets:
+Supported dataset:
 
-### mercari3m-collection-mm2 (Gemini Embedding 2 Multimodal)
+### mercari3m-collection-mm2 (Gemini Embedding)
 
 - **Collection**: `mercari3m-collection-mm2`
 - **ANN Indexes**: `text-emb-index` (text), `image-emb-index` (image)
@@ -68,17 +69,6 @@ Available datasets:
 - **Vector Fields**: `text_emb` (from `{name} {description}`), `image_emb` (from product image)
 - **Distance Metric**: `DOT_PRODUCT`
 - **Data Objects**: `882,688` items
-
-### mercari3m-collection-multimodal (Multimodal Embeddings)
-
-- **Collection**: `mercari3m-collection-multimodal`
-- **ANN Index**: `embedding-index`
-- **Dataset ID**: `mercari3m_multimodal`
-- **Embedding Model**: `multimodal-embedding-001` (BYOE - Bring Your Own Embeddings)
-- **Embedding Dimensions**: `1408` (multimodal)
-- **Embedding Source**: `{name} {description}` + product image
-- **Distance Metric**: `DOT_PRODUCT`
-- **Data Objects**: `2,874,425` items
 
 ### 2. Run the direct model preflight
 

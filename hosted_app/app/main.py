@@ -16,7 +16,6 @@ import threading
 from dataclasses import dataclass, field
 from pathlib import Path
 from time import perf_counter
-from typing import Literal
 
 import vertexai
 from dotenv import load_dotenv
@@ -34,7 +33,6 @@ from google.cloud import discoveryengine_v1 as discoveryengine
 from google.cloud import vectorsearch_v1beta
 from google.genai import types
 from pydantic import BaseModel
-from vertexai.vision_models import Image, MultiModalEmbeddingModel
 
 load_dotenv(Path(__file__).parent / ".env", override=True)
 
@@ -42,7 +40,6 @@ APP_NAME = "lens-mosaic-hosted"
 STATIC_DIR = Path(__file__).parent / "static"
 DEFAULT_VERTEX_AGENT_MODEL = "gemini-live-2.5-flash-native-audio"
 DEFAULT_GEMINI_AGENT_MODEL = "gemini-2.5-flash-native-audio-preview-12-2025"
-DEFAULT_LIVE_VOICE_NAME = "Schedar"
 
 PROJECT_ID = os.getenv("GOOGLE_CLOUD_PROJECT")
 LOCATION = os.getenv("GOOGLE_CLOUD_LOCATION", "us-central1")
@@ -55,14 +52,10 @@ DEFAULT_IMAGE_MIME_TYPE = "image/jpeg"
 RRF_K = 60.0
 
 
-EmbeddingBackend = Literal["legacy-multimodal", "gemini-embedding-2"]
-
-
 @dataclass(frozen=True)
 class CollectionConfig:
     collection_id: str
     dataset_id: str
-    embedding_backend: EmbeddingBackend
     embedding_model: str
     text_vector_field: str
     image_vector_field: str
@@ -73,19 +66,10 @@ SUPPORTED_COLLECTIONS: dict[str, CollectionConfig] = {
     "mercari3m-collection-mm2": CollectionConfig(
         collection_id="mercari3m-collection-mm2",
         dataset_id="mercari3m_mm2",
-        embedding_backend="gemini-embedding-2",
         embedding_model="gemini-embedding-2-preview",
         text_vector_field="text_emb",
         image_vector_field="image_emb",
         output_dimensionality=768,
-    ),
-    "mercari3m-collection-multimodal": CollectionConfig(
-        collection_id="mercari3m-collection-multimodal",
-        dataset_id="mercari3m_multimodal",
-        embedding_backend="legacy-multimodal",
-        embedding_model="multimodalembedding@001",
-        text_vector_field="embedding",
-        image_vector_field="embedding",
     ),
 }
 
@@ -111,7 +95,6 @@ LIVE_PROVIDER = "vertex-ai" if LIVE_USE_VERTEXAI else "gemini-api"
 AGENT_MODEL = (
     DEFAULT_VERTEX_AGENT_MODEL if LIVE_USE_VERTEXAI else DEFAULT_GEMINI_AGENT_MODEL
 )
-LIVE_VOICE_NAME = os.getenv("LENS_MOSAIC_LIVE_VOICE_NAME", DEFAULT_LIVE_VOICE_NAME)
 LIVE_API_KEY_PRESENT = bool(os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY"))
 
 logging.basicConfig(
@@ -121,18 +104,11 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 vertexai.init(project=PROJECT_ID, location=LOCATION)
-legacy_mm_model: MultiModalEmbeddingModel | None = None
-embedding_client: genai.Client | None = None
-if ACTIVE_COLLECTION.embedding_backend == "legacy-multimodal":
-    legacy_mm_model = MultiModalEmbeddingModel.from_pretrained(
-        ACTIVE_COLLECTION.embedding_model
-    )
-else:
-    embedding_client = genai.Client(
-        vertexai=True,
-        project=PROJECT_ID,
-        location=LOCATION,
-    )
+embedding_client = genai.Client(
+    vertexai=True,
+    project=PROJECT_ID,
+    location=LOCATION,
+)
 search_client = vectorsearch_v1beta.DataObjectSearchServiceClient()
 data_client = vectorsearch_v1beta.DataObjectServiceClient()
 rank_client = discoveryengine.RankServiceClient()
@@ -185,20 +161,6 @@ def _search_result_to_dict(result: vectorsearch_v1beta.SearchResult) -> dict | N
     }
 
 
-def _embed_with_legacy_multimodal(
-    text: str | None = None,
-    image: bytes | None = None,
-) -> list[float]:
-    """Generate a legacy multimodal embedding from text or image input."""
-    if legacy_mm_model is None:
-        raise RuntimeError("Legacy multimodal embedding model is not configured")
-    if text is not None:
-        emb = legacy_mm_model.get_embeddings(contextual_text=text)
-        return emb.text_embedding
-    emb = legacy_mm_model.get_embeddings(image=Image(image_bytes=image))
-    return emb.image_embedding
-
-
 def _embed_with_gemini_embedding_2(
     text: str | None = None,
     image: bytes | None = None,
@@ -230,7 +192,7 @@ def _generate_query_embedding(
     text: str | None = None,
     image: bytes | None = None,
 ) -> tuple[str, list[float], float]:
-    """Generate the collection-appropriate query embedding and target field."""
+    """Generate the Gemini embedding query vector and target field."""
     if text is not None:
         vector_field = ACTIVE_COLLECTION.text_vector_field
     elif image is not None:
@@ -239,10 +201,7 @@ def _generate_query_embedding(
         raise ValueError("Either text or image must be provided for embedding")
 
     started_at = perf_counter()
-    if ACTIVE_COLLECTION.embedding_backend == "legacy-multimodal":
-        embedding = _embed_with_legacy_multimodal(text=text, image=image)
-    else:
-        embedding = _embed_with_gemini_embedding_2(text=text, image=image)
+    embedding = _embed_with_gemini_embedding_2(text=text, image=image)
     embed_ms = (perf_counter() - started_at) * 1000
     return vector_field, embedding, embed_ms
 
@@ -250,74 +209,31 @@ def _generate_query_embedding(
 def _collection_search(
     text: str | None = None,
     image: bytes | None = None,
+    rerank: bool = True,
 ) -> list[dict]:
-    """Search the active collection by text or image."""
+    """Search the active Gemini Embedding collection by text or image."""
     started_at = perf_counter()
     source = "text" if text is not None else "image"
-    if ACTIVE_COLLECTION.embedding_backend == "gemini-embedding-2":
-        (
-            results,
-            embed_ms,
-            text_search_ms,
-            image_search_ms,
-            rrf_ms,
-            rerank_ms,
-        ) = _hybrid_collection_search(text=text, image=image)
-        total_ms = (perf_counter() - started_at) * 1000
-        logger.info(
-            "Search latency: backend=gemini-embedding-2 source=%s embed_ms=%.1f "
-            "text_search_ms=%.1f image_search_ms=%.1f rrf_ms=%.1f rerank_ms=%.1f "
-            "total_ms=%.1f results=%d",
-            source,
-            embed_ms,
-            text_search_ms,
-            image_search_ms,
-            rrf_ms,
-            rerank_ms,
-            total_ms,
-            len(results),
-        )
-        return results
-    results, embed_ms, vector_search_ms = _single_vector_search(text=text, image=image)
+    results, embed_ms, text_search_ms, image_search_ms, rrf_ms, rerank_ms = (
+        _hybrid_collection_search(text=text, image=image, rerank=rerank)
+    )
     total_ms = (perf_counter() - started_at) * 1000
     logger.info(
-        "Search latency: backend=legacy-multimodal source=%s embed_ms=%.1f "
-        "vector_search_ms=%.1f total_ms=%.1f results=%d",
+        "Search latency: model=%s source=%s rerank=%s embed_ms=%.1f "
+        "text_search_ms=%.1f image_search_ms=%.1f rrf_ms=%.1f rerank_ms=%.1f "
+        "total_ms=%.1f results=%d",
+        ACTIVE_COLLECTION.embedding_model,
         source,
+        rerank,
         embed_ms,
-        vector_search_ms,
+        text_search_ms,
+        image_search_ms,
+        rrf_ms,
+        rerank_ms,
         total_ms,
         len(results),
     )
     return results
-
-
-def _single_vector_search(
-    text: str | None = None,
-    image: bytes | None = None,
-) -> tuple[list[dict], float, float]:
-    """Run a single vector search against the active collection."""
-    vector_field, embedding, embed_ms = _generate_query_embedding(text=text, image=image)
-    search_started_at = perf_counter()
-    request = vectorsearch_v1beta.SearchDataObjectsRequest(
-        parent=_collection_path(),
-        vector_search=vectorsearch_v1beta.VectorSearch(
-            search_field=vector_field,
-            vector=vectorsearch_v1beta.DenseVector(values=embedding),
-            top_k=SEARCH_TOP_K,
-            output_fields=vectorsearch_v1beta.OutputFields(
-                data_fields=["name", "description"]
-            ),
-        ),
-    )
-    response = search_client.search_data_objects(request)
-    items: list[dict] = []
-    for result in response:
-        item = _search_result_to_dict(result)
-        if item is not None:
-            items.append(item)
-    vector_search_ms = (perf_counter() - search_started_at) * 1000
-    return items, embed_ms, vector_search_ms
 
 
 def _vector_search_by_field(
@@ -375,6 +291,7 @@ def _rrf_fuse_results(result_sets: list[list[dict]]) -> list[dict]:
 def _hybrid_collection_search(
     text: str | None = None,
     image: bytes | None = None,
+    rerank: bool = True,
 ) -> tuple[list[dict], float, float, float, float, float]:
     """Search Gemini Embedding 2 collections across text and image vectors via RRF."""
     _, embedding, embed_ms = _generate_query_embedding(text=text, image=image)
@@ -389,9 +306,13 @@ def _hybrid_collection_search(
     rrf_started_at = perf_counter()
     fused_results = _rrf_fuse_results([text_results, image_results])
     rrf_ms = (perf_counter() - rrf_started_at) * 1000
-    rerank_started_at = perf_counter()
-    ranked_results = _rank_results(text or "", fused_results)
-    rerank_ms = (perf_counter() - rerank_started_at) * 1000
+    if rerank:
+        rerank_started_at = perf_counter()
+        ranked_results = _rank_results(text or "", fused_results)
+        rerank_ms = (perf_counter() - rerank_started_at) * 1000
+    else:
+        ranked_results = fused_results
+        rerank_ms = 0.0
     return (
         ranked_results,
         embed_ms,
@@ -459,14 +380,15 @@ You are a helpful AI shopping assistant.
 
 ## Capabilities
 - You can see images from the user's camera and hear their voice.
-- You can search the web when needed.
 - You can find products using the find_items tool.
 
 ## Finding Similar Products
 - When the user asks to find items similar to what the camera sees:
-  1. Tell the user that you will search for the items similar to them.
+  1. Do not ask the user a follow-up question before searching.
+  2. Tell the user that you will search for the items similar to them.
   For exmaple, "Looks like it's a KEF speaker. Let me find similar items."
-  2. Call find_items with descriptive English text queries.
+  3. Call find_items with descriptive English text queries and also pass the
+  user's original request as user_request.
 - After find_items returns, read the product names to the user,
   simplified to a few words each. For example: "I found a KEF speaker,
   a bookshelf speaker, and a wireless subwoofer. They are now showing on your screen."
@@ -476,10 +398,12 @@ You are a helpful AI shopping assistant.
   request. Examples: "find a teapot that fits this cup", "find a birthday present
   for my son", "what goes well with this shirt".
 - For these requests:
-  1. Tell the user that you will search for the items they requested.
-  2. Use google_search to research what products would be a good match for the user's request.
-  3. From the search results, generate a few specific product description queries.
-  3. Call find_items with those queries.
+  1. Do not ask the user a follow-up question before searching.
+  2. Tell the user that you will search for the items they requested.
+  3. Use google_search to research what products would be a good match for the user's request.
+  4. From the search results, generate a few specific product description queries.
+  5. Call find_items with those queries and also pass the user's original
+  request as user_request.
 
 ## Style
 - Always respond in the user's language.
@@ -495,8 +419,6 @@ class UserSession:
     similar: list[dict] = field(default_factory=list)
     recommended: list[dict] = field(default_factory=list)
     tile_clients: set[WebSocket] = field(default_factory=set)
-    similar_search_enabled: bool = True
-    agent_vision_enabled: bool = False
     image_version: int = 0
     search_enqueued: bool = False
     search_running: bool = False
@@ -506,8 +428,7 @@ class UserSession:
         should_enqueue = False
         with self.state_lock:
             if (
-                self.similar_search_enabled
-                and self.latest_image is not None
+                self.latest_image is not None
                 and not self.search_running
                 and not self.search_enqueued
             ):
@@ -520,55 +441,12 @@ class UserSession:
         with self.state_lock:
             self.search_enqueued = False
 
-    async def set_camera_modes(
-        self, *, similar_search_enabled: bool, agent_vision_enabled: bool
-    ) -> None:
-        should_enqueue = False
-        send_empty_similar = False
-        with self.state_lock:
-            search_changed = self.similar_search_enabled != similar_search_enabled
-            vision_changed = self.agent_vision_enabled != agent_vision_enabled
-            if not search_changed and not vision_changed:
-                return
-
-            self.similar_search_enabled = similar_search_enabled
-            self.agent_vision_enabled = agent_vision_enabled
-
-            if similar_search_enabled:
-                if (
-                    self.latest_image is not None
-                    and not self.search_running
-                    and not self.search_enqueued
-                ):
-                    self.search_enqueued = True
-                    should_enqueue = True
-            else:
-                self.search_enqueued = False
-                self.similar = []
-                send_empty_similar = True
-        logger.info(
-            "Camera modes for %s search=%s vision=%s",
-            self.user_id,
-            similar_search_enabled,
-            agent_vision_enabled,
-        )
-        if should_enqueue:
-            SEARCH_REQUEST_QUEUE.put(self.user_id)
-        if not send_empty_similar:
-            return
-
-        await self.send({"kind": "similar", "items": []})
-
     def update_image(self, image: bytes) -> None:
         should_enqueue = False
         with self.state_lock:
             self.latest_image = image
             self.image_version += 1
-            if (
-                self.similar_search_enabled
-                and not self.search_running
-                and not self.search_enqueued
-            ):
+            if not self.search_running and not self.search_enqueued:
                 self.search_enqueued = True
                 should_enqueue = True
         if should_enqueue:
@@ -577,7 +455,7 @@ class UserSession:
     def begin_search(self) -> tuple[bytes, int] | None:
         with self.state_lock:
             self.search_enqueued = False
-            if not self.similar_search_enabled or self.latest_image is None:
+            if self.latest_image is None:
                 return None
             self.search_running = True
             return self.latest_image, self.image_version
@@ -585,7 +463,7 @@ class UserSession:
     def finish_search(self, processed_version: int) -> bool:
         with self.state_lock:
             self.search_running = False
-            if not self.similar_search_enabled or self.latest_image is None:
+            if self.latest_image is None:
                 return False
             if self.image_version == processed_version or self.search_enqueued:
                 return False
@@ -594,11 +472,7 @@ class UserSession:
 
     def should_publish_similar(self) -> bool:
         with self.state_lock:
-            return self.similar_search_enabled and self.latest_image is not None
-
-    def should_forward_vision(self) -> bool:
-        with self.state_lock:
-            return self.agent_vision_enabled
+            return self.latest_image is not None
 
     async def send(self, payload: dict) -> None:
         dead = set()
@@ -625,13 +499,6 @@ RUNNER = Runner(app_name=APP_NAME, agent=agent, session_service=SESSION_SERVICE)
 RUN_CONFIG = RunConfig(
     streaming_mode=StreamingMode.BIDI,
     response_modalities=["AUDIO"],
-    speech_config=types.SpeechConfig(
-        voice_config=types.VoiceConfig(
-            prebuilt_voice_config=types.PrebuiltVoiceConfig(
-                voice_name=LIVE_VOICE_NAME,
-            )
-        )
-    ),
     session_resumption=types.SessionResumptionConfig(),
 )
 MAIN_LOOP: asyncio.AbstractEventLoop | None = None
@@ -653,14 +520,14 @@ def cleanup(user_id: str, session: UserSession) -> None:
     logger.info("Cleaned up session for %s", user_id)
 
 
-def search_text_queries_sync(queries: list[str]) -> list[dict]:
+def search_text_queries_sync(queries: list[str], user_request: str) -> list[dict]:
     seen, items = set(), []
     for query in queries:
-        for item in _collection_search(text=query):
+        for item in _collection_search(text=query, rerank=False):
             if item["id"] not in seen:
                 seen.add(item["id"])
                 items.append(item)
-    return _rank_results(" ".join(queries), items)
+    return _rank_results(user_request.strip(), items)
 
 
 async def _publish_similar_results(
@@ -726,17 +593,41 @@ def _stop_search_worker() -> None:
     logger.info("Stopped image search worker thread")
 
 
-def find_items(queries: list[str], tool_context: ToolContext) -> str:
-    """Find product matches from text queries and publish them to the UI."""
+def find_items(
+    queries: list[str], user_request: str, tool_context: ToolContext
+) -> str:
+    """Find shopping items that match one or more product description queries.
+
+    Use this tool when you want to show the user product candidates on screen.
+    Provide a short list of descriptive English shopping queries such as product
+    names, styles, materials, colors, or use cases. The tool searches Mercari,
+    publishes the matched items to the UI, and uses the original user request
+    for the final Ranking API rerank across all merged candidates. It returns a
+    short comma-separated summary of the top item names for the agent to mention
+    out loud.
+
+    Args:
+        queries: One or more descriptive English product-search queries.
+        user_request: The user's original request in their own words.
+        tool_context: ADK tool context for the current user session.
+
+    Returns:
+        A comma-separated string of top matched item names, or "No items found".
+    """
     session = session_for(tool_context.session.user_id)
-    session.recommended = search_text_queries_sync(queries)
+    session.recommended = search_text_queries_sync(queries, user_request)
     if MAIN_LOOP:
         asyncio.run_coroutine_threadsafe(
             session.send({"kind": "recommended", "items": session.recommended}),
             MAIN_LOOP,
         )
     names = [item["name"] for item in session.recommended[:3]]
-    logger.info("find_items(%s) -> %s items", queries, len(session.recommended))
+    logger.info(
+        "find_items(user_request=%r, queries=%s) -> %s items",
+        user_request,
+        queries,
+        len(session.recommended),
+    )
     return ", ".join(names) if names else "No items found"
 
 
@@ -766,29 +657,16 @@ async def client_to_agent(
             continue
 
         payload = json.loads(message["text"])
-        if payload.get("type") == "config":
-            similar_search_enabled = payload.get("similarSearchEnabled")
-            agent_vision_enabled = payload.get("agentVisionEnabled")
-            if isinstance(similar_search_enabled, bool) and isinstance(
-                agent_vision_enabled, bool
-            ):
-                await session.set_camera_modes(
-                    similar_search_enabled=similar_search_enabled,
-                    agent_vision_enabled=agent_vision_enabled,
-                )
-            continue
         if payload.get("type") == "text":
             queue.send_content(types.Content(parts=[types.Part(text=payload["text"])]))
             continue
         if payload.get("type") != "image":
             continue
-        if not session.similar_search_enabled and not session.should_forward_vision():
-            continue
 
         image = base64.b64decode(payload["data"])
         session.update_image(image)
         should_forward_to_agent = payload.get("forwardToAgent", True)
-        if session.should_forward_vision() and should_forward_to_agent:
+        if should_forward_to_agent:
             queue.send_realtime(
                 types.Blob(mime_type=payload.get("mimeType", "image/jpeg"), data=image)
             )
@@ -821,11 +699,9 @@ async def startup() -> None:
     _ensure_search_worker()
     logger.info("Search collection: %s", ACTIVE_COLLECTION.collection_id)
     logger.info("Search dataset: %s", ACTIVE_COLLECTION.dataset_id)
-    logger.info("Search embedding backend: %s", ACTIVE_COLLECTION.embedding_backend)
     logger.info("Search embedding model: %s", ACTIVE_COLLECTION.embedding_model)
     logger.info("Live backend provider: %s", LIVE_PROVIDER)
     logger.info("Live backend model: %s", AGENT_MODEL)
-    logger.info("Live voice: %s", LIVE_VOICE_NAME)
     if LIVE_USE_VERTEXAI:
         logger.info("Live backend will use Vertex AI credentials from the environment")
     elif not LIVE_API_KEY_PRESENT:
@@ -892,13 +768,11 @@ def health():
         "project_id": PROJECT_ID,
         "collection_id": COLLECTION_ID,
         "dataset_id": ACTIVE_COLLECTION.dataset_id,
-        "embedding_backend": ACTIVE_COLLECTION.embedding_backend,
         "embedding_model": ACTIVE_COLLECTION.embedding_model,
         "live_enabled": True,
         "live_provider": LIVE_PROVIDER,
         "google_genai_use_vertexai": LIVE_USE_VERTEXAI,
         "agent_model": AGENT_MODEL,
-        "live_voice": LIVE_VOICE_NAME,
     }
 
 

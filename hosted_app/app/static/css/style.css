@@ -73,29 +73,10 @@ header h1 {
 
 #status.connected {
   color: #fff;
-  cursor: pointer;
 }
 
 #status.connected::before {
   background: #38c172;
-}
-
-#camera-toggle-panel {
-  position: absolute;
-  top: calc(100% + 8px);
-  right: 0;
-  z-index: 20;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  min-width: 170px;
-  padding: 10px;
-  background: rgba(10, 10, 10, 0.96);
-  border: 1px solid #333;
-}
-
-#camera-toggle-panel[hidden] {
-  display: none;
 }
 
 main {
