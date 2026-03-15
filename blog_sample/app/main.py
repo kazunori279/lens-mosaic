@@ -18,28 +18,20 @@ from google.adk.sessions import InMemorySessionService
 from google.adk.tools import ToolContext
 from google.genai import types
 
-APP_NAME = "lens-mosaic-blog-sample"
-ENV_FILE = Path(__file__).with_name(".env")
-DEFAULT_VERTEX_MODEL = "gemini-live-2.5-flash-native-audio"
-DEFAULT_GEMINI_MODEL = "gemini-2.5-flash-native-audio-preview-12-2025"
-MAX_TILE_ITEMS = 64
+import vertexai
 
+APP_NAME = "lens-mosaic-blog-sample"
+AGENT_MODEL = "gemini-live-2.5-flash-native-audio"
+MAX_TILE_ITEMS = 64
+ENV_FILE = Path(__file__).with_name(".env")
 if ENV_FILE.exists():
     load_dotenv(ENV_FILE, override=True)
-
 HOSTED_URL = os.getenv("LENS_MOSAIC_HOSTED_URL", "").rstrip("/")
-LIVE_USE_VERTEXAI = (
-    os.getenv("GOOGLE_GENAI_USE_VERTEXAI", "").strip().lower() in {"1", "true", "yes"}
+
+vertexai.init(
+    project=os.getenv("GOOGLE_CLOUD_PROJECT"),
+    location=os.getenv("GOOGLE_CLOUD_LOCATION", "us-central1"),
 )
-AGENT_MODEL = DEFAULT_VERTEX_MODEL if LIVE_USE_VERTEXAI else DEFAULT_GEMINI_MODEL
-
-if LIVE_USE_VERTEXAI:
-    import vertexai
-
-    vertexai.init(
-        project=os.getenv("GOOGLE_CLOUD_PROJECT"),
-        location=os.getenv("GOOGLE_CLOUD_LOCATION", "us-central1"),
-    )
 
 
 @dataclass

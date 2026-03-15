@@ -44,7 +44,7 @@ http://127.0.0.1:8000/
 Important values:
 
 - `LENS_MOSAIC_HOSTED_URL`: deployed hosted app URL used for proxied UI and API routes
-- `GOOGLE_GENAI_USE_VERTEXAI=TRUE`: use Vertex AI live mode for camera-aware local testing
+- `GOOGLE_CLOUD_PROJECT` and `GOOGLE_CLOUD_LOCATION`: Vertex AI project and region for local live testing
 
 ## Use case
 
