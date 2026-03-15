@@ -1,44 +1,32 @@
 # LensMosaic
 
-LensMosaic supports two working runtime modes from the same repository:
+LensMosaic now runs as a single-origin app from the same server for:
 
-- `hosted_app/`: Cloud Run app for static UI, public search API, item detail API, and hosted live demo API
-- `local_live/`: local ADK live API server for the blog-reader flow
+- static UI
+- search endpoints
+- item detail APIs
+- live WebSocket sessions
 
-## Supported Modes
+## Supported Mode
 
-### 1. Blog Reader Mode
+### Hosted App
 
-- Open the UI from the hosted Cloud Run app
-- Use the hosted public search API
-- Run the live API locally from `local_live/app/main.py`
-
-The browser uses:
-
-- hosted origin for UI, search, and item detail requests
-- local origin for live WebSocket connections
-
-### 2. Full Hosted Demo Mode
-
-- Open the hosted Cloud Run app directly
+- Open the app directly from the server you started or deployed
 - Use the same origin for UI, search, item details, and live WebSockets
 
 ## What Is Working
 
 - Similar-item search from camera frames
 - Agent-triggered `find_items(...)` flows from speech and image context
-- Hosted demo mode
-- Hosted UI plus local live backend mode
-- Desktop browser testing with the hosted UI and a local live backend
+- Local single-server testing
+- Hosted deployment
 
 ## Repository Layout
 
 ```text
 lens-mosaic/
 ├── docs/
-├── hosted_app/
-│   └── app/
-└── local_live/
+└── hosted_app/
     └── app/
 ```
 

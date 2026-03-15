@@ -28,42 +28,15 @@ let recommendedTileItems = [];
 
 const userId = "user-" + Math.random().toString(36).slice(2, 8);
 const sessionId = "session-" + Date.now();
-const runtimeConfig = resolveRuntimeConfig();
-const liveWsOrigin = toWebSocketOrigin(runtimeConfig.liveOrigin);
+const appOrigin = window.location.origin;
+const liveWsOrigin = toWebSocketOrigin(appOrigin);
 
-statusEl.title = `Mode: ${runtimeConfig.mode}. Search: ${runtimeConfig.searchOrigin}. Live: ${runtimeConfig.liveOrigin}`;
-
-function resolveRuntimeConfig() {
-  const params = new URLSearchParams(window.location.search);
-  const configured = window.LENS_MOSAIC_CONFIG || {};
-  const mode = params.get("mode") || configured.mode || (params.get("backend") ? "local" : "demo");
-  const searchOrigin = normalizeOrigin(
-    params.get("search") || configured.searchOrigin || window.location.origin,
-  );
-  const liveOrigin = normalizeOrigin(
-    params.get("backend")
-      || configured.liveOrigin
-      || (mode === "local" ? "http://127.0.0.1:8000" : window.location.origin),
-  );
-  return { mode, searchOrigin, liveOrigin };
-}
-
-function normalizeOrigin(value) {
-  try {
-    return new URL(value, window.location.origin).origin;
-  } catch {
-    return window.location.origin;
-  }
-}
+statusEl.title = `Origin: ${appOrigin}`;
 
 function toWebSocketOrigin(origin) {
   const url = new URL(origin);
   url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
   return url.origin;
-}
-
-function buildUrl(origin, path) {
-  return new URL(path, `${origin}/`).toString();
 }
 
 // --- WebSocket ---
@@ -124,7 +97,7 @@ function handleEvent(event) {
   }
 
   // Handle input transcription (user's spoken words)
-  if (event.inputTranscription && event.inputTranscription.text) {
+  if (event.inputTranscription && shouldRenderTextChunk(event.inputTranscription)) {
     if (!currentInputEl) {
       currentInputEl = addMessage("you (voice)", "");
       currentInputText = "";
@@ -139,7 +112,7 @@ function handleEvent(event) {
   }
 
   // Handle output transcription (agent's spoken words)
-  if (event.outputTranscription && event.outputTranscription.text) {
+  if (event.outputTranscription && shouldRenderTextChunk(event.outputTranscription)) {
     hasOutputTranscription = true;
     if (!currentAgentEl) {
       currentAgentEl = addMessage("agent", "");
@@ -166,7 +139,7 @@ function handleEvent(event) {
       }
 
       // Text response (skip if output transcription already delivered it)
-      if (part.text && !hasOutputTranscription) {
+      if (part.text && !hasOutputTranscription && shouldRenderTextChunk(part)) {
         if (!currentAgentEl) {
           currentAgentEl = addMessage("agent", "");
           currentAgentText = "";
@@ -187,6 +160,25 @@ function handleEvent(event) {
 
 function isHiddenThoughtPart(part) {
   return Boolean(part.thought || part.thoughtSignature);
+}
+
+function shouldRenderTextChunk(chunk) {
+  const text = chunk?.text;
+  if (typeof text !== "string" || text.trim() === "") return false;
+  if (chunk?.thought || chunk?.thoughtSignature) return false;
+  return !looksLikeHiddenThoughtText(text);
+}
+
+function looksLikeHiddenThoughtText(text) {
+  const normalized = text.trim().toLowerCase();
+  return (
+    normalized.startsWith("thought:") ||
+    normalized.startsWith("thinking:") ||
+    normalized.startsWith("reasoning:") ||
+    normalized.startsWith("internal reasoning:") ||
+    normalized.startsWith("<thinking>") ||
+    normalized.startsWith("[thinking]")
+  );
 }
 
 function cleanCJKSpaces(text) {
@@ -768,9 +760,7 @@ async function showItemPopup(itemId) {
   itemPopup.classList.add("active");
   itemPopup.classList.remove("visible");
   try {
-    const res = await fetch(
-      buildUrl(runtimeConfig.searchOrigin, `/api/item/${encodeURIComponent(itemId)}`),
-    );
+    const res = await fetch(`/api/item/${encodeURIComponent(itemId)}`);
     if (!res.ok) { closePopup(); return; }
     const item = await res.json();
     popupName.textContent = item.name || itemId;

@@ -1,10 +1,7 @@
-"""Hosted LensMosaic app for Cloud Run.
+"""Hosted LensMosaic app for local and Cloud Run deployments.
 
-This service supports two browser flows from the same deployment:
-
-- Demo mode: static UI + public search API + hosted live API
-- Local-live mode: static UI + public search API, while the browser connects
-  to a reader's local live API server via a runtime-configured origin
+This service serves the UI, search APIs, item detail APIs, and live WebSocket
+endpoints from the same origin.
 """
 
 from __future__ import annotations

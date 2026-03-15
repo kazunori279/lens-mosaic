@@ -510,29 +510,81 @@ footer a:hover {
   color: #fff;
 }
 
-@media (max-width: 600px) {
-  main {
-    flex-direction: column;
-  }
+main:has(#video-container.active) {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) clamp(190px, 31vw, 320px);
+  grid-template-rows: minmax(180px, 30vh) minmax(0, 1fr);
+}
 
-  #video-container {
-    border-right: none;
-    border-bottom: 1px solid #333;
-    flex: 0 0 auto;
-  }
+main:has(#video-container.active) #video-container.active {
+  display: contents;
+}
 
-  #video-container.active #camera {
-    max-height: 32vh;
-    max-height: 32dvh;
-  }
+main:has(#video-container.active) #image-tile-wrap {
+  grid-column: 1;
+  grid-row: 1 / -1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 0;
+  min-height: 0;
+  padding: 12px;
+  background: #111;
+  border-right: 1px solid #333;
+  overflow: hidden;
+}
 
-  #image-tile {
-    min-height: 240px;
-  }
+main:has(#video-container.active) #image-tile {
+  width: auto;
+  height: 100%;
+  max-width: 100%;
+  max-height: 100%;
+  aspect-ratio: 1;
+}
 
-  #chat {
-    flex: 1 1 auto;
-  }
+main:has(#video-container.active) #camera {
+  grid-column: 2;
+  grid-row: 1;
+  display: block;
+  width: 100%;
+  height: 100%;
+  max-height: none;
+  min-height: 0;
+  object-fit: contain;
+  background: #000;
+}
+
+main:has(#video-container.active) #camera-controls {
+  grid-column: 2;
+  grid-row: 1;
+  display: flex;
+  justify-content: flex-end;
+  align-items: flex-start;
+  align-self: start;
+  justify-self: stretch;
+  padding: 8px;
+  pointer-events: none;
+  z-index: 2;
+}
+
+main:has(#video-container.active) #flip-camera-btn {
+  width: 44px;
+  min-width: 44px;
+  max-width: 44px;
+  height: 44px;
+  min-height: 44px;
+  max-height: 44px;
+  padding: 0;
+  flex: 0 0 44px;
+  pointer-events: auto;
+}
+
+main:has(#video-container.active) #chat {
+  grid-column: 2;
+  grid-row: 2;
+  min-width: 0;
+  min-height: 0;
+  border-top: 1px solid #333;
 }
 
 @media (max-width: 480px) {
@@ -561,14 +613,8 @@ footer a:hover {
     font-size: 20px;
   }
 
-  #video-container.active #camera {
-    max-height: 28vh;
-    max-height: 28dvh;
-  }
-
   #image-tile {
     --tile-grid-size: 5;
-    min-height: 220px;
   }
 
   #messages {
@@ -589,44 +635,5 @@ footer a:hover {
 
   #text-input {
     min-width: 0;
-  }
-}
-
-@media (pointer: coarse) and (orientation: landscape) and (min-width: 900px) {
-  #video-container.active {
-    display: grid;
-    grid-template-columns: minmax(260px, 38%) minmax(320px, 1fr);
-    grid-template-rows: auto 1fr;
-    align-items: stretch;
-    justify-content: stretch;
-  }
-
-  #video-container.active #camera-controls {
-    grid-column: 1 / -1;
-    grid-row: 1;
-    padding: 8px 10px;
-  }
-
-  #video-container.active #camera {
-    grid-column: 1;
-    grid-row: 2;
-    width: 100%;
-    height: 100%;
-    max-height: none;
-    min-height: 0;
-    object-fit: contain;
-    align-self: center;
-    justify-self: center;
-  }
-
-  #video-container.active #image-tile-wrap {
-    grid-column: 2;
-    grid-row: 2;
-    min-width: 0;
-    min-height: 0;
-  }
-
-  #video-container.active #image-tile {
-    height: 100%;
   }
 }

@@ -1,14 +1,16 @@
 # Local Live App
 
-`local_live` is the blog-reader-friendly live API server.
+`local_live` is a legacy standalone live API server.
 
-It does not serve the LensMosaic UI. Readers should open the hosted app and point its
-live backend at this service with the `backend` query parameter.
+The active app now uses `hosted_app` as a single-origin server for UI, search, item
+details, and live WebSockets, so this service is no longer part of the default
+workflow.
 
 `local_live` keeps the ADK live logic local while delegating search to a hosted service
 via `SEARCH_SERVICE_URL`.
 
-The current workflow is focused on desktop browser testing with `http://127.0.0.1:8000`.
+If you still experiment with `local_live`, the standalone server runs on
+`http://127.0.0.1:8000`.
 
 For local desktop testing, prefer Gemini API mode so the server picks the
 provider-specific default automatically. If local Vertex AI live audio

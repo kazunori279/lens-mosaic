@@ -9,12 +9,13 @@ It serves:
 - item detail endpoints for the UI
 - hosted live WebSocket endpoints for the quick demo
 
-This app supports both:
+This app now uses a single-origin architecture for:
 
-1. same-origin hosted demo mode
-2. hosted UI plus local live backend mode
+- static UI
+- search and item detail APIs
+- live WebSocket sessions
 
-This README covers two complete workflows for the hosted app:
+This README covers two deployment environments for the hosted app:
 
 - local testing on your machine or LAN
 - remote deployment to Cloud Run
@@ -45,6 +46,15 @@ If you use Gemini API mode, set `GOOGLE_API_KEY`.
 
 Set `LENS_MOSAIC_COLLECTION_ID` to the collection you want the hosted app to search.
 The app derives the embedding model and vector fields from that collection ID.
+
+If you run these commands in Codex or another sandboxed environment, set:
+
+```bash
+export UV_CACHE_DIR=/tmp/uv-cache
+```
+
+That prevents `uv` from failing when it cannot write to its default cache
+directory.
 
 Available datasets:
 
@@ -213,9 +223,6 @@ print(url)
 PY
 ```
 
-If `uv` cannot write to its default cache, rerun the same command with
-`UV_CACHE_DIR=/tmp/uv-cache` prefixed.
-
 Open `/tmp/lens-mosaic-hosted-app-mobile-qr.png`, show it on your desktop, and let
 the user scan it from their smartphone.
 
@@ -339,12 +346,6 @@ Open the app:
 https://YOUR_SERVICE_URL/
 ```
 
-For the blog-reader mode, open:
-
-```text
-https://YOUR_SERVICE_URL/?backend=http://127.0.0.1:8000
-```
-
 Note: `curl -I` sends `HEAD`, and the app currently responds with `405` on routes
 that only allow `GET`. Use a normal `GET` request when validating reachability.
 
@@ -389,11 +390,11 @@ For a Cloud Run deployment:
 - If `model_test.py` shows fast local text turns but slow or timed-out local Vertex AI
   audio turns, while the same app is smooth on Cloud Run, treat that as a
   machine-to-Vertex live path issue rather than a FastAPI/UI regression. For local
-  desktop work, prefer Gemini API mode or keep the live backend deployed on Cloud Run.
+  desktop work, prefer Gemini API mode.
 - For local iteration, prefer the LAN HTTPS flow so the same server stays reachable
   from both your desktop browser and your phone.
 - If the phone can reach the page but live mode disconnects quickly, check the server
   log separately from the basic LAN/HTTPS setup. A page load proves the LAN path is
   working.
-- For the hosted UI plus `local_live` workflow, see
+- For a localhost-only development loop, see
   [docs/local-reader-quickstart.md](/Users/kaz/Documents/GitHub/lens-mosaic/docs/local-reader-quickstart.md).

@@ -21,7 +21,7 @@ from google.adk.sessions import InMemorySessionService
 from google.adk.tools import ToolContext, google_search
 from google.genai import types
 
-load_dotenv(Path(__file__).parent / ".env", override=True)
+load_dotenv(Path(__file__).parent / ".env")
 
 SEARCH_SERVICE_URL = os.getenv("SEARCH_SERVICE_URL", "http://localhost:8001")
 
@@ -69,6 +69,18 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
+def should_skip_search_tls_verify(url: str) -> bool:
+    """Allow self-signed localhost search endpoints during local desktop runs."""
+    try:
+        parsed = httpx.URL(url)
+    except Exception:
+        return False
+    return parsed.scheme == "https" and parsed.host in {"127.0.0.1", "localhost"}
+
+
+SEARCH_VERIFY = not should_skip_search_tls_verify(SEARCH_SERVICE_URL)
+
+
 async def search_api(
     text: str | None = None, image: bytes | None = None
 ) -> list[dict]:
@@ -90,7 +102,7 @@ def search_api_sync(text: str | None = None, image: bytes | None = None) -> list
         payload["text"] = text
     if image:
         payload["image_base64"] = base64.b64encode(image).decode()
-    with httpx.Client(timeout=60.0) as client:
+    with httpx.Client(timeout=60.0, verify=SEARCH_VERIFY) as client:
         resp = client.post(f"{SEARCH_SERVICE_URL}/search", json=payload)
         resp.raise_for_status()
         return resp.json()
@@ -107,7 +119,7 @@ async def rank_api(query: str, results: list[dict]) -> list[dict]:
 def rank_api_sync(query: str, results: list[dict]) -> list[dict]:
     """Synchronous re-rank helper for tool execution."""
     payload = {"query": query, "results": results}
-    with httpx.Client(timeout=60.0) as client:
+    with httpx.Client(timeout=60.0, verify=SEARCH_VERIFY) as client:
         resp = client.post(f"{SEARCH_SERVICE_URL}/rank", json=payload)
         resp.raise_for_status()
         return resp.json()
@@ -353,10 +365,15 @@ app = FastAPI()
 async def startup() -> None:
     global MAIN_LOOP, HTTP_CLIENT
     MAIN_LOOP = asyncio.get_running_loop()
-    HTTP_CLIENT = httpx.AsyncClient(timeout=60.0)
+    HTTP_CLIENT = httpx.AsyncClient(timeout=60.0, verify=SEARCH_VERIFY)
     logger.info("Live backend provider: %s", LIVE_PROVIDER)
     logger.info("Live backend model: %s", AGENT_MODEL)
     logger.info("Live backend model source: %s", AGENT_MODEL_SOURCE)
+    if not SEARCH_VERIFY:
+        logger.warning(
+            "TLS verification disabled for local search service: %s",
+            SEARCH_SERVICE_URL,
+        )
     if RAW_AGENT_MODEL and RAW_AGENT_MODEL != AGENT_MODEL:
         logger.info(
             "Normalized AGENT_MODEL=%s to provider default %s",

@@ -2,12 +2,12 @@
 
 ## Goals
 
-LensMosaic needs to support two modes from the same codebase:
+LensMosaic now targets a single-origin architecture from the same codebase:
 
-1. Blog reader mode
-   - Hosted UI
-   - Hosted public search API
-   - Local live API server run by the reader
+1. Local development mode
+   - Local hosted UI
+   - Local search API
+   - Local live API server
 2. Public demo mode
    - Hosted UI
    - Hosted public search API
@@ -33,27 +33,18 @@ lens-mosaic/
 ### `hosted_app`
 
 - Serves static UI assets
-- Exposes public search endpoints
-- Can also expose hosted live WebSocket endpoints for quick demos
+- Exposes search endpoints
+- Exposes item detail APIs
+- Exposes live WebSocket endpoints
 
-### `local_live`
+## Current Direction
 
-- Stays focused on the live ADK server used in the blog post
-- Uses the hosted search service instead of local Vector Search setup
-- Targets desktop-browser testing with the hosted UI
-
-## Refactor Steps
-
-1. Add frontend runtime config for `searchOrigin` and `liveOrigin`
-2. Make the hosted UI default to same-origin hosted demo mode
-3. Add a query-param or bootstrap config for local-live mode
-4. Consolidate or copy shared static assets intentionally
-5. Move search-service settings to environment variables
-6. Add deployment docs for Cloud Run
+1. Keep the browser on a single origin for UI, search, item details, and live sockets
+2. Use `hosted_app` as the local and deployed server entrypoint
+3. Keep deployment docs focused on one-server startup
 
 ## Current Implementation Notes
 
-- `hosted_app` serves static files, search endpoints, item detail endpoints, and hosted live WebSocket endpoints.
-- `local_live` serves the live WebSocket endpoints and delegates search to the hosted service through `SEARCH_SERVICE_URL`.
-- The frontend switches live origin with the `backend=` query parameter.
-- The `find_items(...)` tool path now performs its search work directly instead of round-tripping through the main event loop, which avoids stalled live turns after image-based requests.
+- `hosted_app` serves static files, search endpoints, item detail endpoints, and live WebSocket endpoints.
+- The browser now talks to the same origin for every app capability.
+- The `find_items(...)` tool path performs its search work directly instead of round-tripping through the main event loop, which avoids stalled live turns after image-based requests.

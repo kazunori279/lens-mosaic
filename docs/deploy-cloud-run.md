@@ -2,11 +2,6 @@
 
 These steps deploy the all-in-one hosted app from `hosted_app/`.
 
-The hosted service supports both:
-
-- full hosted demo mode
-- hosted UI plus local live backend mode for blog readers
-
 ## 1. Prepare environment variables
 
 Use `hosted_app/app/.env.example` as the source of truth for the variables you need to provide to Cloud Run.
@@ -60,10 +55,4 @@ Then open:
 https://YOUR_SERVICE_URL/
 ```
 
-That should exercise the full hosted demo mode.
-
-For the blog-reader mode, open:
-
-```text
-https://YOUR_SERVICE_URL/?backend=http://127.0.0.1:8000
-```
+That exercises the full same-origin app.
