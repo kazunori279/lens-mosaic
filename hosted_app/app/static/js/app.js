@@ -2,15 +2,19 @@ import { AudioRecorder } from "./audio-recorder.js";
 import { AudioPlayer } from "./audio-player.js";
 
 const statusEl = document.getElementById("status");
+const cameraTogglePanel = document.getElementById("camera-toggle-panel");
 const messagesEl = document.getElementById("messages");
 const chatEmptyStateEl = document.getElementById("chat-empty-state");
 const textInput = document.getElementById("text-input");
 const startBtn = document.getElementById("start-btn");
 const closeRecommendedBtn = document.getElementById("close-recommended-btn");
 const flipCameraBtn = document.getElementById("flip-camera-btn");
+const similarSearchToggle = document.getElementById("similar-search-toggle");
+const agentVisionToggle = document.getElementById("agent-vision-toggle");
 const videoContainer = document.getElementById("video-container");
 const videoEl = document.getElementById("camera");
 const canvasEl = document.getElementById("canvas");
+const AGENT_VISION_SEND_MS = 1000;
 
 let ws = null;
 let micOn = false;
@@ -25,6 +29,8 @@ let tileWs = null;
 let displayTileSource = "similar";
 let similarTileItems = [];
 let recommendedTileItems = [];
+let cameraTogglePanelOpen = false;
+let lastAgentVisionSentAt = 0;
 
 const userId = "user-" + Math.random().toString(36).slice(2, 8);
 const sessionId = "session-" + Date.now();
@@ -39,6 +45,12 @@ function toWebSocketOrigin(origin) {
   return url.origin;
 }
 
+function setCameraTogglePanelOpen(open) {
+  cameraTogglePanelOpen = open;
+  cameraTogglePanel.hidden = !open;
+  statusEl.setAttribute("aria-expanded", String(open));
+}
+
 // --- WebSocket ---
 
 function connect() {
@@ -46,14 +58,18 @@ function connect() {
   startBtn.disabled = true;
 
   ws.onopen = () => {
+    sendCameraConfig();
     statusEl.textContent = "Connected";
     statusEl.className = "connected";
+    statusEl.disabled = false;
     startBtn.disabled = false;
   };
 
   ws.onclose = () => {
+    setCameraTogglePanelOpen(false);
     statusEl.textContent = "Disconnected – reconnecting...";
     statusEl.className = "";
+    statusEl.disabled = true;
     startBtn.disabled = true;
     setTimeout(connect, 3000);
   };
@@ -231,6 +247,23 @@ function addSystemMessage(text) {
   return addMessage("system", text);
 }
 
+function isSimilarSearchEnabled() {
+  return Boolean(similarSearchToggle?.checked);
+}
+
+function isAgentVisionEnabled() {
+  return Boolean(agentVisionToggle?.checked);
+}
+
+function sendCameraConfig() {
+  if (!ws || ws.readyState !== WebSocket.OPEN) return;
+  ws.send(JSON.stringify({
+    type: "config",
+    similarSearchEnabled: isSimilarSearchEnabled(),
+    agentVisionEnabled: isAgentVisionEnabled(),
+  }));
+}
+
 function getMediaAccessErrorMessage() {
   if (navigator.mediaDevices?.getUserMedia) {
     return "Camera and microphone require HTTPS on mobile browsers. Open the secure URL for this app and try again.";
@@ -288,6 +321,7 @@ async function startCamera() {
   videoEl.srcObject = camStream;
   videoContainer.classList.add("active");
   camOn = true;
+  lastAgentVisionSentAt = 0;
 
   // Send frames every 500ms
   camInterval = setInterval(captureAndSend, 500);
@@ -305,10 +339,16 @@ function stopCamera() {
   videoEl.srcObject = null;
   videoContainer.classList.remove("active");
   camOn = false;
+  lastAgentVisionSentAt = 0;
 }
 
 function captureAndSend() {
   if (!ws || ws.readyState !== WebSocket.OPEN) return;
+  const now = Date.now();
+  const sendForSearch = isSimilarSearchEnabled();
+  const sendForAgentVision =
+    isAgentVisionEnabled() && now - lastAgentVisionSentAt >= AGENT_VISION_SEND_MS;
+  if (!sendForSearch && !sendForAgentVision) return;
   if (!videoEl.videoWidth) return;
 
   canvasEl.width = videoEl.videoWidth;
@@ -318,7 +358,17 @@ function captureAndSend() {
 
   const dataUrl = canvasEl.toDataURL("image/jpeg", 0.6);
   const b64 = dataUrl.split(",")[1];
-  ws.send(JSON.stringify({ type: "image", data: b64, mimeType: "image/jpeg" }));
+  ws.send(
+    JSON.stringify({
+      type: "image",
+      data: b64,
+      mimeType: "image/jpeg",
+      forwardToAgent: sendForAgentVision,
+    }),
+  );
+  if (sendForAgentVision) {
+    lastAgentVisionSentAt = now;
+  }
 }
 
 async function flipCamera() {
@@ -823,6 +873,38 @@ closeRecommendedBtn.addEventListener("click", () => {
 
 flipCameraBtn.addEventListener("click", async () => {
   await flipCamera();
+});
+
+function handleSimilarSearchToggleChange() {
+  sendCameraConfig();
+  if (isSimilarSearchEnabled()) {
+    return;
+  }
+  similarTileItems = [];
+  if (displayTileSource === "similar") {
+    fadeOutAllTiles();
+  }
+}
+
+similarSearchToggle.addEventListener("change", handleSimilarSearchToggleChange);
+agentVisionToggle.addEventListener("change", () => {
+  if (isAgentVisionEnabled()) {
+    lastAgentVisionSentAt = 0;
+  }
+  sendCameraConfig();
+});
+statusEl.addEventListener("click", (event) => {
+  if (!statusEl.classList.contains("connected")) {
+    return;
+  }
+  event.stopPropagation();
+  setCameraTogglePanelOpen(!cameraTogglePanelOpen);
+});
+cameraTogglePanel.addEventListener("click", (event) => {
+  event.stopPropagation();
+});
+document.addEventListener("click", () => {
+  setCameraTogglePanelOpen(false);
 });
 
 if (!canUseMediaDevices()) {

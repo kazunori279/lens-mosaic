@@ -44,12 +44,22 @@ header h1 {
   font-size: 12px;
 }
 
+#status-wrap {
+  position: relative;
+}
+
 #status {
+  appearance: none;
   display: flex;
   align-items: center;
   gap: 8px;
   font-size: 12px;
   color: #666;
+  background: transparent;
+  border: 0;
+  padding: 0;
+  font-family: monospace;
+  cursor: default;
 }
 
 #status::before {
@@ -63,10 +73,29 @@ header h1 {
 
 #status.connected {
   color: #fff;
+  cursor: pointer;
 }
 
 #status.connected::before {
   background: #38c172;
+}
+
+#camera-toggle-panel {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 170px;
+  padding: 10px;
+  background: rgba(10, 10, 10, 0.96);
+  border: 1px solid #333;
+}
+
+#camera-toggle-panel[hidden] {
+  display: none;
 }
 
 main {
@@ -145,6 +174,7 @@ main {
 #camera-controls {
   display: none;
   justify-content: flex-end;
+  align-items: center;
   padding: 8px;
   gap: 8px;
 }
@@ -212,6 +242,21 @@ main {
   padding: 0;
   font-size: 22px;
   line-height: 1;
+}
+
+.camera-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 44px;
+  padding: 0 12px;
+  border: 1px solid #444;
+  color: #ddd;
+  font-size: 12px;
+}
+
+.camera-toggle input {
+  accent-color: #38c172;
 }
 
 #camera {
@@ -565,6 +610,10 @@ main:has(#video-container.active) #camera-controls {
   padding: 8px;
   pointer-events: none;
   z-index: 2;
+}
+
+main:has(#video-container.active) #camera-controls > * {
+  pointer-events: auto;
 }
 
 main:has(#video-container.active) #flip-camera-btn {

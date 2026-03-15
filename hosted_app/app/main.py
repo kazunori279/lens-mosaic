@@ -11,6 +11,8 @@ import base64
 import json
 import logging
 import os
+import queue
+import threading
 from dataclasses import dataclass, field
 from pathlib import Path
 from time import perf_counter
@@ -38,11 +40,11 @@ load_dotenv(Path(__file__).parent / ".env", override=True)
 
 APP_NAME = "lens-mosaic-hosted"
 STATIC_DIR = Path(__file__).parent / "static"
-IMAGE_INTERVAL = 1.0
 DEFAULT_VERTEX_AGENT_MODEL = "gemini-live-2.5-flash-native-audio"
 DEFAULT_GEMINI_AGENT_MODEL = "gemini-2.5-flash-native-audio-preview-12-2025"
+DEFAULT_LIVE_VOICE_NAME = "Schedar"
 
-PROJECT_ID = os.getenv("GOOGLE_CLOUD_PROJECT", "your-gcp-project-id")
+PROJECT_ID = os.getenv("GOOGLE_CLOUD_PROJECT")
 LOCATION = os.getenv("GOOGLE_CLOUD_LOCATION", "us-central1")
 RANKING_CONFIG = (
     f"projects/{PROJECT_ID}/locations/global/rankingConfigs/default_ranking_config"
@@ -109,6 +111,7 @@ LIVE_PROVIDER = "vertex-ai" if LIVE_USE_VERTEXAI else "gemini-api"
 AGENT_MODEL = (
     DEFAULT_VERTEX_AGENT_MODEL if LIVE_USE_VERTEXAI else DEFAULT_GEMINI_AGENT_MODEL
 )
+LIVE_VOICE_NAME = os.getenv("LENS_MOSAIC_LIVE_VOICE_NAME", DEFAULT_LIVE_VOICE_NAME)
 LIVE_API_KEY_PRESENT = bool(os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY"))
 
 logging.basicConfig(
@@ -492,21 +495,110 @@ class UserSession:
     similar: list[dict] = field(default_factory=list)
     recommended: list[dict] = field(default_factory=list)
     tile_clients: set[WebSocket] = field(default_factory=set)
-    new_image: asyncio.Event = field(default_factory=asyncio.Event)
-    search_task: asyncio.Task | None = None
+    similar_search_enabled: bool = True
+    agent_vision_enabled: bool = False
+    image_version: int = 0
+    search_enqueued: bool = False
+    search_running: bool = False
+    state_lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
 
     def start(self) -> None:
-        if self.search_task is None or self.search_task.done():
-            self.search_task = asyncio.create_task(run_similar_search(self))
+        should_enqueue = False
+        with self.state_lock:
+            if (
+                self.similar_search_enabled
+                and self.latest_image is not None
+                and not self.search_running
+                and not self.search_enqueued
+            ):
+                self.search_enqueued = True
+                should_enqueue = True
+        if should_enqueue:
+            SEARCH_REQUEST_QUEUE.put(self.user_id)
 
     def stop(self) -> None:
-        if self.search_task:
-            self.search_task.cancel()
-            self.search_task = None
+        with self.state_lock:
+            self.search_enqueued = False
+
+    async def set_camera_modes(
+        self, *, similar_search_enabled: bool, agent_vision_enabled: bool
+    ) -> None:
+        should_enqueue = False
+        send_empty_similar = False
+        with self.state_lock:
+            search_changed = self.similar_search_enabled != similar_search_enabled
+            vision_changed = self.agent_vision_enabled != agent_vision_enabled
+            if not search_changed and not vision_changed:
+                return
+
+            self.similar_search_enabled = similar_search_enabled
+            self.agent_vision_enabled = agent_vision_enabled
+
+            if similar_search_enabled:
+                if (
+                    self.latest_image is not None
+                    and not self.search_running
+                    and not self.search_enqueued
+                ):
+                    self.search_enqueued = True
+                    should_enqueue = True
+            else:
+                self.search_enqueued = False
+                self.similar = []
+                send_empty_similar = True
+        logger.info(
+            "Camera modes for %s search=%s vision=%s",
+            self.user_id,
+            similar_search_enabled,
+            agent_vision_enabled,
+        )
+        if should_enqueue:
+            SEARCH_REQUEST_QUEUE.put(self.user_id)
+        if not send_empty_similar:
+            return
+
+        await self.send({"kind": "similar", "items": []})
 
     def update_image(self, image: bytes) -> None:
-        self.latest_image = image
-        self.new_image.set()
+        should_enqueue = False
+        with self.state_lock:
+            self.latest_image = image
+            self.image_version += 1
+            if (
+                self.similar_search_enabled
+                and not self.search_running
+                and not self.search_enqueued
+            ):
+                self.search_enqueued = True
+                should_enqueue = True
+        if should_enqueue:
+            SEARCH_REQUEST_QUEUE.put(self.user_id)
+
+    def begin_search(self) -> tuple[bytes, int] | None:
+        with self.state_lock:
+            self.search_enqueued = False
+            if not self.similar_search_enabled or self.latest_image is None:
+                return None
+            self.search_running = True
+            return self.latest_image, self.image_version
+
+    def finish_search(self, processed_version: int) -> bool:
+        with self.state_lock:
+            self.search_running = False
+            if not self.similar_search_enabled or self.latest_image is None:
+                return False
+            if self.image_version == processed_version or self.search_enqueued:
+                return False
+            self.search_enqueued = True
+            return True
+
+    def should_publish_similar(self) -> bool:
+        with self.state_lock:
+            return self.similar_search_enabled and self.latest_image is not None
+
+    def should_forward_vision(self) -> bool:
+        with self.state_lock:
+            return self.agent_vision_enabled
 
     async def send(self, payload: dict) -> None:
         dead = set()
@@ -533,9 +625,18 @@ RUNNER = Runner(app_name=APP_NAME, agent=agent, session_service=SESSION_SERVICE)
 RUN_CONFIG = RunConfig(
     streaming_mode=StreamingMode.BIDI,
     response_modalities=["AUDIO"],
+    speech_config=types.SpeechConfig(
+        voice_config=types.VoiceConfig(
+            prebuilt_voice_config=types.PrebuiltVoiceConfig(
+                voice_name=LIVE_VOICE_NAME,
+            )
+        )
+    ),
     session_resumption=types.SessionResumptionConfig(),
 )
 MAIN_LOOP: asyncio.AbstractEventLoop | None = None
+SEARCH_REQUEST_QUEUE: queue.Queue[str | None] = queue.Queue()
+SEARCH_WORKER: threading.Thread | None = None
 
 
 def session_for(user_id: str) -> UserSession:
@@ -562,17 +663,67 @@ def search_text_queries_sync(queries: list[str]) -> list[dict]:
     return _rank_results(" ".join(queries), items)
 
 
-async def run_similar_search(session: UserSession) -> None:
+async def _publish_similar_results(
+    user_id: str, processed_version: int, results: list[dict]
+) -> None:
+    session = SESSIONS.get(user_id)
+    if session is None or not session.should_publish_similar():
+        return
+    session.similar = results
+    await session.send({"kind": "similar", "items": results})
+
+
+def _search_worker_loop() -> None:
     while True:
-        await session.new_image.wait()
-        session.new_image.clear()
-        if not session.latest_image:
+        user_id = SEARCH_REQUEST_QUEUE.get()
+        if user_id is None:
+            return
+
+        session = SESSIONS.get(user_id)
+        if session is None:
             continue
+
+        search_input = session.begin_search()
+        if search_input is None:
+            continue
+
+        image, processed_version = search_input
         try:
-            session.similar = _collection_search(image=session.latest_image)
-            await session.send({"kind": "similar", "items": session.similar})
+            results = _collection_search(image=image)
         except Exception as exc:
-            logger.error("Search error for %s: %s", session.user_id, exc, exc_info=True)
+            logger.error("Search error for %s: %s", user_id, exc, exc_info=True)
+        else:
+            if MAIN_LOOP is not None:
+                asyncio.run_coroutine_threadsafe(
+                    _publish_similar_results(user_id, processed_version, results),
+                    MAIN_LOOP,
+                )
+
+        if session.finish_search(processed_version):
+            SEARCH_REQUEST_QUEUE.put(user_id)
+
+
+def _ensure_search_worker() -> None:
+    global SEARCH_WORKER
+    if SEARCH_WORKER is not None and SEARCH_WORKER.is_alive():
+        return
+    SEARCH_WORKER = threading.Thread(
+        target=_search_worker_loop,
+        name="lens-mosaic-search-worker",
+        daemon=True,
+    )
+    SEARCH_WORKER.start()
+    logger.info("Started image search worker thread")
+
+
+def _stop_search_worker() -> None:
+    global SEARCH_WORKER
+    if SEARCH_WORKER is None:
+        return
+    SEARCH_REQUEST_QUEUE.put(None)
+    SEARCH_WORKER.join(timeout=2.0)
+    SEARCH_WORKER = None
+    logger.info("Stopped image search worker thread")
 
 
 def find_items(queries: list[str], tool_context: ToolContext) -> str:
@@ -604,7 +755,6 @@ async def ensure_adk_session(user_id: str, session_id: str) -> None:
 async def client_to_agent(
     ws: WebSocket, session: UserSession, queue: LiveRequestQueue
 ) -> None:
-    last_image = 0.0
     while True:
         message = await ws.receive()
         if "bytes" in message:
@@ -616,21 +766,32 @@ async def client_to_agent(
             continue
 
         payload = json.loads(message["text"])
+        if payload.get("type") == "config":
+            similar_search_enabled = payload.get("similarSearchEnabled")
+            agent_vision_enabled = payload.get("agentVisionEnabled")
+            if isinstance(similar_search_enabled, bool) and isinstance(
+                agent_vision_enabled, bool
+            ):
+                await session.set_camera_modes(
+                    similar_search_enabled=similar_search_enabled,
+                    agent_vision_enabled=agent_vision_enabled,
+                )
+            continue
         if payload.get("type") == "text":
             queue.send_content(types.Content(parts=[types.Part(text=payload["text"])]))
             continue
         if payload.get("type") != "image":
             continue
+        if not session.similar_search_enabled and not session.should_forward_vision():
+            continue
 
         image = base64.b64decode(payload["data"])
         session.update_image(image)
-        now = asyncio.get_running_loop().time()
-        if now - last_image < IMAGE_INTERVAL:
-            continue
-        last_image = now
-        queue.send_realtime(
-            types.Blob(mime_type=payload.get("mimeType", "image/jpeg"), data=image)
-        )
+        should_forward_to_agent = payload.get("forwardToAgent", True)
+        if session.should_forward_vision() and should_forward_to_agent:
+            queue.send_realtime(
+                types.Blob(mime_type=payload.get("mimeType", "image/jpeg"), data=image)
+            )
 
 
 async def agent_to_client(
@@ -657,18 +818,27 @@ app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 async def startup() -> None:
     global MAIN_LOOP
     MAIN_LOOP = asyncio.get_running_loop()
+    _ensure_search_worker()
     logger.info("Search collection: %s", ACTIVE_COLLECTION.collection_id)
     logger.info("Search dataset: %s", ACTIVE_COLLECTION.dataset_id)
     logger.info("Search embedding backend: %s", ACTIVE_COLLECTION.embedding_backend)
     logger.info("Search embedding model: %s", ACTIVE_COLLECTION.embedding_model)
     logger.info("Live backend provider: %s", LIVE_PROVIDER)
     logger.info("Live backend model: %s", AGENT_MODEL)
+    logger.info("Live voice: %s", LIVE_VOICE_NAME)
     if LIVE_USE_VERTEXAI:
         logger.info("Live backend will use Vertex AI credentials from the environment")
     elif not LIVE_API_KEY_PRESENT:
         logger.warning(
             "Gemini API live backend selected, but GOOGLE_API_KEY is missing"
         )
+
+
+@app.on_event("shutdown")
+async def shutdown() -> None:
+    global MAIN_LOOP
+    _stop_search_worker()
+    MAIN_LOOP = None
 
 
 @app.get("/")
@@ -728,6 +898,7 @@ def health():
         "live_provider": LIVE_PROVIDER,
         "google_genai_use_vertexai": LIVE_USE_VERTEXAI,
         "agent_model": AGENT_MODEL,
+        "live_voice": LIVE_VOICE_NAME,
     }
 
 
