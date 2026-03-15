@@ -43,8 +43,18 @@ http://127.0.0.1:8080/
 
 Important values:
 
-- `LENS_MOSAIC_HOSTED_URL`: deployed hosted app URL used for proxied UI and API routes
-- `GOOGLE_CLOUD_PROJECT` and `GOOGLE_CLOUD_LOCATION`: Vertex AI project and region for local live testing
+- `GOOGLE_CLOUD_PROJECT`: Vertex AI project for local live testing
+
+These values are currently hardcoded in `blog_sample/app/main.py`:
+
+- `GOOGLE_CLOUD_LOCATION=us-central1`
+- `LENS_MOSAIC_COLLECTION_ID=mercari3m-collection-mm2`
+- `LENS_MOSAIC_HOSTED_URL=https://lens-mosaic-nhhfh7g7iq-uc.a.run.app`
+
+The proxied `/search` endpoint now expects:
+
+- `queries`: a short list of English product-search queries
+- `user_intent`: the user goal used for final reranking
 
 ## Use case
 

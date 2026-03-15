@@ -177,7 +177,7 @@ Run a basic text search check from your Mac:
 ```bash
 curl -k -X POST "${LENS_MOSAIC_URL}search" \
   -H 'Content-Type: application/json' \
-  -d '{"text":"red handbag"}'
+  -d '{"queries":["red handbag","small red purse"],"user_intent":"find a red handbag for daily use"}'
 ```
 
 Current local image-search latency on `mercari3m-collection-mm2` is roughly:
@@ -222,7 +222,7 @@ the user scan it from their smartphone.
 ### 2. Local testing checklist
 
 - `curl -k https://YOUR_LAN_IP:8080/health` succeeds from your Mac
-- `curl -k -X POST https://YOUR_LAN_IP:8080/search ...` returns search results
+- `curl -k -X POST https://YOUR_LAN_IP:8080/search ...` returns reranked search results
 - the root URL serves the HTML app on your desktop browser
 - the phone can open the local HTTPS URL
 - the certificate warning can be accepted once in Safari
@@ -330,7 +330,7 @@ Check search with a text query:
 ```bash
 curl -X POST "$(gcloud run services describe lens-mosaic --project "${GOOGLE_CLOUD_PROJECT}" --region "${GOOGLE_CLOUD_LOCATION}" --format='value(status.url)')/search" \
   -H 'Content-Type: application/json' \
-  -d '{"text":"red handbag"}'
+  -d '{"queries":["red handbag","small red purse"],"user_intent":"find a red handbag for daily use"}'
 ```
 
 Open the app:

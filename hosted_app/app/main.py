@@ -117,8 +117,8 @@ rank_client = discoveryengine.RankServiceClient()
 
 
 class SearchRequest(BaseModel):
-    text: str | None = None
-    image_base64: str | None = None
+    queries: list[str]
+    user_intent: str
 
 
 class SearchResult(BaseModel):
@@ -407,7 +407,7 @@ You are a helpful AI shopping assistant.
   2. Tell the user that you will search for the items similar to them.
   For exmaple, "Looks like it's a KEF speaker. Let me find similar items."
   3. Call find_items with descriptive English text queries and also pass the
-  user intent as user_request.
+  user intent as user_intent.
 - After find_items returns, read the product names to the user,
   simplified to a few words each. For example: "I found a KEF speaker,
   a bookshelf speaker, and a wireless subwoofer. They are now showing on your screen."
@@ -422,7 +422,7 @@ You are a helpful AI shopping assistant.
   3. Use google_search to research what products would be a good match for the user's request.
   4. From the search results, generate 5 product description queries.
   5. Call find_items with those queries and also pass the user intent as
-  user_request.
+  user_intent.
 - After find_items returns, read the product names to the user,
   simplified to a few words each. For example: "I found a KEF speaker,
   a bookshelf speaker, and a wireless subwoofer. They are now showing on your screen."
@@ -437,8 +437,7 @@ class SessionState:
     latest_image: bytes | None = None
     similar: list[dict] = field(default_factory=list)
     recommended: list[dict] = field(default_factory=list)
-    tile_clients: set[WebSocket] = field(default_factory=set)
-    live_clients: int = 0
+    tile_client: WebSocket | None = None
     image_version: int = 0
     search_enqueued: bool = False
     search_running: bool = False
@@ -495,13 +494,14 @@ class SessionState:
             return self.latest_image is not None
 
     async def send(self, payload: dict) -> None:
-        dead = set()
-        for ws in self.tile_clients:
-            try:
-                await ws.send_json(payload)
-            except Exception:
-                dead.add(ws)
-        self.tile_clients -= dead
+        ws = self.tile_client
+        if ws is None:
+            return
+        try:
+            await ws.send_json(payload)
+        except Exception:
+            if self.tile_client is ws:
+                self.tile_client = None
 
     async def snapshot(self, ws: WebSocket) -> None:
         await ws.send_json(
@@ -540,21 +540,21 @@ def session_state_for(
 
 
 def cleanup(session_id: str, session: SessionState) -> None:
-    if session.tile_clients or session.live_clients > 0:
+    if session.tile_client is not None or session.user_id is not None:
         return
     session.stop()
     SESSION_STATES.pop(session_id, None)
     logger.info("Cleaned up session state for %s", session_id)
 
 
-def search_text_queries_sync(queries: list[str], user_request: str) -> list[dict]:
+def search_text_queries_sync(queries: list[str], user_intent: str) -> list[dict]:
     seen, items = set(), []
     for query in queries:
         for item in _collection_search(text=query, rerank=False):
             if item["id"] not in seen:
                 seen.add(item["id"])
                 items.append(item)
-    return _rank_results(user_request.strip(), items)
+    return _rank_results(user_intent.strip(), items)
 
 
 async def _publish_similar_results(
@@ -621,25 +621,25 @@ def _stop_search_worker() -> None:
 
 
 def find_items(
-    queries: list[str], user_request: str, tool_context: ToolContext
+    queries: list[str], user_intent: str, tool_context: ToolContext
 ) -> str:
     """Find shopping items that match one or more product description queries.
 
     Use this tool when you want to show the user product candidates on screen.
     Provide a list of descriptive English product-search queries The tool 
-    searches and publishes the matched items to the UI, and uses the user_request 
+    searches and publishes the matched items to the UI, and uses the user_intent 
     for the final Ranking API rerank across all merged candidates. 
 
     Args:
         queries: One or more descriptive English product-search queries.
-        user_request: The user's intent for finding items.
+        user_intent: The user's intent for finding items.
         tool_context: ADK tool context for the current user session.
 
     Returns:
         A comma-separated string of top matched item names, or "No items found".
     """
     session = session_state_for(tool_context.session.id, tool_context.session.user_id)
-    session.recommended = search_text_queries_sync(queries, user_request)
+    session.recommended = search_text_queries_sync(queries, user_intent)
     if MAIN_LOOP:
         asyncio.run_coroutine_threadsafe(
             session.send({"kind": "recommended", "items": session.recommended}),
@@ -647,8 +647,8 @@ def find_items(
         )
     names = [item["name"] for item in session.recommended[:3]]
     logger.info(
-        "find_items(user_request=%r, queries=%s) -> %s items",
-        user_request,
+        "find_items(user_intent=%r, queries=%s) -> %s items",
+        user_intent,
         queries,
         len(session.recommended),
     )
@@ -748,18 +748,17 @@ async def root():
 
 @app.post("/search", response_model=list[SearchResult])
 def search_endpoint(req: SearchRequest):
-    """Search by text or image."""
-    if req.text is None and req.image_base64 is None:
+    """Search with multiple recall queries and a final intent rerank."""
+    queries = [query.strip() for query in req.queries if query.strip()]
+    user_intent = req.user_intent.strip()
+    if not queries:
         raise HTTPException(
-            status_code=400, detail="Either text or image_base64 must be provided"
+            status_code=400, detail="queries must include at least one non-empty string"
         )
-
-    image_bytes = None
-    if req.image_base64:
-        image_bytes = base64.b64decode(req.image_base64)
-
-    logger.info("Search request: text=%s, has_image=%s", req.text, bool(image_bytes))
-    return _collection_search(text=req.text, image=image_bytes)
+    if not user_intent:
+        raise HTTPException(status_code=400, detail="user_intent must be a non-empty string")
+    logger.info("Search request: user_intent=%r, queries=%s", user_intent, queries)
+    return search_text_queries_sync(queries, user_intent)
 
 
 @app.post("/rank", response_model=list[SearchResult])
@@ -803,7 +802,7 @@ def health():
 async def tile_socket(ws: WebSocket, session_id: str) -> None:
     await ws.accept()
     session = session_state_for(session_id)
-    session.tile_clients.add(ws)
+    session.tile_client = ws
     try:
         await session.snapshot(ws)
         while True:
@@ -811,7 +810,8 @@ async def tile_socket(ws: WebSocket, session_id: str) -> None:
     except WebSocketDisconnect:
         pass
     finally:
-        session.tile_clients.discard(ws)
+        if session.tile_client is ws:
+            session.tile_client = None
         cleanup(session_id, session)
 
 
@@ -821,7 +821,6 @@ async def live_socket(ws: WebSocket, user_id: str, session_id: str) -> None:
     await ensure_adk_session(user_id, session_id)
 
     session = session_state_for(session_id, user_id)
-    session.live_clients += 1
     session.start()
     queue = LiveRequestQueue()
 
@@ -841,5 +840,5 @@ async def live_socket(ws: WebSocket, user_id: str, session_id: str) -> None:
         logger.error("Streaming error: %s", exc, exc_info=True)
     finally:
         queue.close()
-        session.live_clients -= 1
+        session.user_id = None
         cleanup(session_id, session)

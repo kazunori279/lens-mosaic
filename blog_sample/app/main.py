@@ -24,15 +24,17 @@ import vertexai
 APP_NAME = "lens-mosaic-blog-sample"
 AGENT_MODEL = "gemini-live-2.5-flash-native-audio"
 MAX_TILE_ITEMS = 64
+GOOGLE_CLOUD_LOCATION = "us-central1"
+LENS_MOSAIC_COLLECTION_ID = "mercari3m-collection-mm2"
+HOSTED_URL = "https://lens-mosaic-nhhfh7g7iq-uc.a.run.app"
 ENV_FILE = Path(__file__).with_name(".env")
 if ENV_FILE.exists():
     load_dotenv(ENV_FILE, override=True)
 # The blog sample reuses the deployed hosted app for UI and catalog APIs.
-HOSTED_URL = os.getenv("LENS_MOSAIC_HOSTED_URL", "").rstrip("/")
 
 vertexai.init(
     project=os.getenv("GOOGLE_CLOUD_PROJECT"),
-    location=os.getenv("GOOGLE_CLOUD_LOCATION", "us-central1"),
+    location=GOOGLE_CLOUD_LOCATION,
 )
 
 
@@ -42,8 +44,7 @@ class SessionState:
     session_id: str
     user_id: str | None = None
     recommended: list[dict] = field(default_factory=list)
-    tile_clients: set[WebSocket] = field(default_factory=set)
-    live_clients: int = 0
+    tile_client: WebSocket | None = None
 
 
 SESSION_STATES: dict[str, SessionState] = {}
@@ -68,7 +69,7 @@ def session_state_for(
 
 def cleanup_session(session_id: str) -> None:
     session = SESSION_STATES.get(session_id)
-    if session and session.live_clients == 0 and not session.tile_clients:
+    if session and session.user_id is None and session.tile_client is None:
         SESSION_STATES.pop(session_id, None)
 
 
@@ -82,8 +83,6 @@ def fetch_upstream(
     query: list[tuple[str, str]] | None = None,
 ) -> tuple[int, str, bytes]:
     # Keep local sample routes thin by forwarding most HTTP work upstream.
-    if not HOSTED_URL:
-        raise RuntimeError("Set LENS_MOSAIC_HOSTED_URL to your deployed hosted app URL")
     url = f"{HOSTED_URL}{path}"
     if query:
         url = f"{url}?{urllib.parse.urlencode(query)}"
@@ -120,47 +119,40 @@ async def broadcast_recommended(session_id: str, items: list[dict]) -> None:
     session = SESSION_STATES.get(session_id)
     if not session:
         return
-    # Drop any tile sockets that disappeared between broadcasts.
-    dead = set()
-    for ws in session.tile_clients:
-        try:
-            await ws.send_json({"kind": "recommended", "items": items})
-        except Exception:
-            dead.add(ws)
-    session.tile_clients -= dead
+    ws = session.tile_client
+    if ws is None:
+        return
+    try:
+        await ws.send_json({"kind": "recommended", "items": items})
+    except Exception:
+        if session.tile_client is ws:
+            session.tile_client = None
 
 
 # Tool and agent definitions for the local live assistant.
-def find_items(queries: list[str], user_request: str, tool_context: ToolContext) -> str:
+def find_items(queries: list[str], user_intent: str, tool_context: ToolContext) -> str:
     """Find shopping items that match one or more product description queries.
 
-    Use this tool when you want to show the user product candidates on screen.
-    Provide a list of descriptive English product-search queries The tool searches and
-    publishes the matched items to the UI, and uses the user_request for the final 
-    Ranking API rerank across all merged candidates. 
+    Use this tool to show product candidates on screen. Provide descriptive
+    product-search queries and user intent in English. The tool searches, 
+    publishes the matched items to the UI, and uses user_intent for the 
+    final rerank across the candidates.
 
     Args:
-        queries: One or more descriptive English product-search queries.
-        user_request: The user's intent for finding items.
+        queries: One or more product-search queries in English.
+        user_intent: The user's intent for finding items in English.
         tool_context: ADK tool context for the current user session.
 
     Returns:
         A comma-separated string of top matched item names, or "No items found".
     """
-    # Merge search hits across a few descriptive queries before updating the tiles.
-    seen: dict[str, dict] = {}
-    for query in queries[:4]:
-        status, _, body = fetch_upstream(
-            "/search",
-            method="POST",
-            body=json.dumps({"text": query}).encode(),
-            content_type="application/json",
-        )
-        if status >= 400:
-            continue
-        for item in json.loads(body.decode()):
-            seen.setdefault(item["id"], item)
-    items = sorted(seen.values(), key=lambda item: item.get("score", 0.0), reverse=True)
+    status, _, body = fetch_upstream(
+        "/search",
+        method="POST",
+        body=json.dumps({"queries": queries[:4], "user_intent": user_intent}).encode(),
+        content_type="application/json",
+    )
+    items = [] if status >= 400 else json.loads(body.decode())
     session = session_state_for(tool_context.session.id, tool_context.session.user_id)
     session.recommended = items[:MAX_TILE_ITEMS]
     if MAIN_LOOP:
@@ -179,21 +171,14 @@ agent = Agent(
     tools=[find_items],
     instruction="""
         You are a helpful AI shopping assistant. Always respond in the user's language.
-        Capabilities:
-        - You can hear the user's voice, read their text, and see camera images.
-        - Use find_items to show product candidates on screen.
-        Similar-item requests:
+        You can hear the user's voice, read their text, and see camera images.
+        When user asks what's in the image, describe it.
+        When user asks for finding items, recommendation, or matching-product requests:
         - Do not ask a follow-up question before searching.
-        - Briefly say you will search for similar items.
-        - Call find_items with a couple of descriptive English queries.
-        - Pass the user intent as user_request.
-        Recommendations or matching products:
-        - Do not ask a follow-up question before searching.
-        - Infer the shopping goal from the user intent and camera context.
-        - Call find_items with 5 descriptive English queries.
-        - Pass the user intent as user_request.
-        After find_items returns:
-        - Mention a few item names in simple language.""",
+        - Briefly say what you will search.
+        - Infer the user intent from the conversation and camera context.
+        - Call find_items with 5 descriptive queries and the user intent
+        - After find_items returns, mention a few item names in simple language.""",
 )
 RUNNER = Runner(app_name=APP_NAME, agent=agent, session_service=SESSION_SERVICE)
 RUN_CONFIG = RunConfig(
@@ -285,7 +270,7 @@ async def item_proxy(item_id: str) -> Response:
 async def tile_socket(ws: WebSocket, session_id: str) -> None:
     await ws.accept()
     session = session_state_for(session_id)
-    session.tile_clients.add(ws)
+    session.tile_client = ws
     try:
         # New tile clients receive the latest recommendation snapshot immediately.
         await ws.send_json({"kind": "snapshot", "similarItems": [], "recommendedItems": session.recommended})
@@ -297,7 +282,8 @@ async def tile_socket(ws: WebSocket, session_id: str) -> None:
         if not is_disconnect_error(exc):
             raise
     finally:
-        session.tile_clients.discard(ws)
+        if session.tile_client is ws:
+            session.tile_client = None
         cleanup_session(session_id)
 
 
@@ -306,7 +292,6 @@ async def live_socket(ws: WebSocket, user_id: str, session_id: str) -> None:
     await ws.accept()
     await ensure_adk_session(user_id, session_id)
     session = session_state_for(session_id, user_id)
-    session.live_clients += 1
     # One queue feeds the ADK runner while both websocket tasks stay in sync.
     queue = LiveRequestQueue()
     try:
@@ -321,5 +306,5 @@ async def live_socket(ws: WebSocket, user_id: str, session_id: str) -> None:
             raise
     finally:
         queue.close()
-        session.live_clients -= 1
+        session.user_id = None
         cleanup_session(session_id)
