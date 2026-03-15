@@ -136,15 +136,6 @@ def find_items(
     publishes the matched items to the UI, and uses ranking_query for the
     final rerank across the candidates.
 
-    Guidance:
-    - queries are broad English recall queries.
-    - ranking_query is a short English description of the items the user wants
-      to see.
-    - ranking_query should describe product attributes, category, style, use
-      case, or compatibility when helpful.
-    - Do not phrase ranking_query as a task such as "identify the item" or
-      "find similar products".
-
     Args:
         queries: One or more product-search queries in English.
         ranking_query: A short English description used for final reranking.
@@ -186,7 +177,7 @@ agent = Agent(
         - Do not ask a follow-up question before searching.
         - Briefly say what you will search.
         - Infer the desired items from the conversation and camera context.
-        - Call find_items with 5 descriptive queries and a short English ranking_query
+        - Call find_items with 5 descriptive queries and a ranking_query.
         - After find_items returns, mention a few item names in simple language.""",
 )
 RUNNER = Runner(app_name=APP_NAME, agent=agent, session_service=SESSION_SERVICE)

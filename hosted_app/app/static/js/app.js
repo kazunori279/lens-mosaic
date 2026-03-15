@@ -266,8 +266,8 @@ async function startCamera() {
   camOn = true;
   lastAgentVisionSentAt = 0;
 
-  // Send frames every 500ms
-  camInterval = setInterval(captureAndSend, 500);
+  // Send frames every 1s
+  camInterval = setInterval(captureAndSend, 1000);
 }
 
 function stopCamera() {

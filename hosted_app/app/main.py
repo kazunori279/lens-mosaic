@@ -729,15 +729,6 @@ def find_items(
     searches and publishes the matched items to the UI, then uses ranking_query
     for the final Ranking API rerank across all merged candidates.
 
-    Guidance:
-    - queries are broad English recall queries.
-    - ranking_query is a short English description of the items the user wants
-      to see.
-    - ranking_query should describe product attributes, category, style, use
-      case, or compatibility when helpful.
-    - Do not phrase ranking_query as a task such as "identify the item" or
-      "find similar products".
-
     Args:
         queries: One or more descriptive English product-search queries.
         ranking_query: A short English description used for final reranking.
