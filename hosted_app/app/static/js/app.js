@@ -69,7 +69,7 @@ function connect() {
 
 let currentAgentText = "";
 let currentAgentEl = null;
-let hasOutputTranscription = false;
+let hasFinalOutputTranscription = false;
 let currentInputEl = null;
 let currentInputText = "";
 
@@ -78,7 +78,7 @@ function handleEvent(event) {
   if (event.turnComplete) {
     currentAgentEl = null;
     currentAgentText = "";
-    hasOutputTranscription = false;
+    hasFinalOutputTranscription = false;
     currentInputEl = null;
     currentInputText = "";
     return;
@@ -92,7 +92,7 @@ function handleEvent(event) {
     if (player && player._worklet) player._worklet.port.postMessage({ command: "endOfAudio" });
     currentAgentEl = null;
     currentAgentText = "";
-    hasOutputTranscription = false;
+    hasFinalOutputTranscription = false;
     currentInputEl = null;
     currentInputText = "";
     return;
@@ -115,42 +115,23 @@ function handleEvent(event) {
 
   // Handle output transcription (agent's spoken words)
   if (event.outputTranscription && shouldRenderTextChunk(event.outputTranscription)) {
-    hasOutputTranscription = true;
-    if (!currentAgentEl) {
-      currentAgentEl = addMessage("agent", "");
-      currentAgentText = "";
-    }
     if (event.outputTranscription.finished) {
-      // Final transcription contains the complete text — replace
+      hasFinalOutputTranscription = true;
+      if (!currentAgentEl) {
+        currentAgentEl = addMessage("agent", "");
+      }
+      // Stream visible text from content.parts and use the finished transcript
+      // as the final replacement once speech generation is complete.
       currentAgentText = event.outputTranscription.text;
-    } else {
-      // Partial chunk — append
-      currentAgentText += event.outputTranscription.text;
+      currentAgentEl.querySelector(".text").textContent = cleanCJKSpaces(currentAgentText);
+      messagesEl.scrollTop = messagesEl.scrollHeight;
     }
-    currentAgentEl.querySelector(".text").textContent = cleanCJKSpaces(currentAgentText);
-    messagesEl.scrollTop = messagesEl.scrollHeight;
   }
 
   // Handle content events (text or audio)
   const content = event.content;
   if (content && content.parts) {
     for (const part of content.parts) {
-      // Skip hidden reasoning parts; only render user-facing text content.
-      if (isHiddenThoughtPart(part)) {
-        continue;
-      }
-
-      // Text response (skip if output transcription already delivered it)
-      if (part.text && !hasOutputTranscription && shouldRenderTextChunk(part)) {
-        if (!currentAgentEl) {
-          currentAgentEl = addMessage("agent", "");
-          currentAgentText = "";
-        }
-        currentAgentText += part.text;
-        currentAgentEl.querySelector(".text").textContent = cleanCJKSpaces(currentAgentText);
-        messagesEl.scrollTop = messagesEl.scrollHeight;
-      }
-
       // Audio response
       if (part.inlineData) {
         const bytes = base64ToBytes(part.inlineData.data);
@@ -160,33 +141,20 @@ function handleEvent(event) {
   }
 }
 
-function isHiddenThoughtPart(part) {
-  return Boolean(part.thought || part.thoughtSignature);
-}
-
 function shouldRenderTextChunk(chunk) {
   const text = chunk?.text;
-  if (typeof text !== "string" || text.trim() === "") return false;
-  if (chunk?.thought || chunk?.thoughtSignature) return false;
-  return !looksLikeHiddenThoughtText(text);
-}
-
-function looksLikeHiddenThoughtText(text) {
-  const normalized = text.trim().toLowerCase();
-  return (
-    normalized.startsWith("thought:") ||
-    normalized.startsWith("thinking:") ||
-    normalized.startsWith("reasoning:") ||
-    normalized.startsWith("internal reasoning:") ||
-    normalized.startsWith("<thinking>") ||
-    normalized.startsWith("[thinking]")
-  );
+  return typeof text === "string" && text.trim() !== "";
 }
 
 function cleanCJKSpaces(text) {
   const cjk = /[\u3040-\u309f\u30a0-\u30ff\u4e00-\u9faf]/;
   if (!cjk.test(text)) return text;
-  return text.replace(/\s+/g, "");
+  // Streaming transcripts can insert spaces between neighboring CJK chars.
+  // Remove only those spaces so embedded English names keep their spacing.
+  return text.replace(
+    /(?<=[\u3040-\u309f\u30a0-\u30ff\u4e00-\u9faf])\s+(?=[\u3040-\u309f\u30a0-\u30ff\u4e00-\u9faf])/g,
+    "",
+  );
 }
 
 function addMessage(role, text) {
