@@ -44,7 +44,7 @@ Desktop HTTP:
 
 ```bash
 cd hosted_app/app
-uv run --project .. uvicorn main:app --host 127.0.0.1 --port 8081
+uv run --project .. uvicorn main:app --host 127.0.0.1 --port 8080
 ```
 
 ## 3. Open the app
@@ -52,7 +52,7 @@ uv run --project .. uvicorn main:app --host 127.0.0.1 --port 8081
 Desktop localhost example:
 
 ```text
-http://127.0.0.1:8081/
+http://127.0.0.1:8080/
 ```
 
 Notes:
@@ -62,8 +62,8 @@ Notes:
 
 ## 4. Quick checks
 
-- `http://127.0.0.1:8081/health`
-- `curl -X POST http://127.0.0.1:8081/search -H 'content-type: application/json' -d '{"text":"speaker"}'`
+- `http://127.0.0.1:8080/health`
+- `curl -X POST http://127.0.0.1:8080/search -H 'content-type: application/json' -d '{"text":"speaker"}'`
 
 ## 5. Expected behavior
 

@@ -321,6 +321,7 @@ async function flipCamera() {
 
 const imageTileEl = document.getElementById("image-tile");
 const TILE_FADE_MS = 2000;
+const RECOMMENDED_AUTO_CLOSE_MS = 30000;
 
 function getGridSize() {
   const size = Number.parseInt(
@@ -654,6 +655,7 @@ const mosaicController = new MosaicController();
 let tilePausedUntil = 0;
 let tileTransitionUntil = 0;
 let tileTransitionTimer = null;
+let recommendedAutoCloseTimer = null;
 
 function updateRecommendedControls() {
   closeRecommendedBtn.classList.toggle(
@@ -670,10 +672,53 @@ function fadeOutAllTiles() {
   mosaicController.fadeOutAll();
 }
 
+function clearRecommendedAutoCloseTimer() {
+  if (recommendedAutoCloseTimer) {
+    clearTimeout(recommendedAutoCloseTimer);
+    recommendedAutoCloseTimer = null;
+  }
+}
+
+function closeRecommendedTiles() {
+  clearRecommendedAutoCloseTimer();
+  recommendedTileItems = [];
+  displayTileSource = "similar";
+  updateRecommendedControls();
+  fadeOutAllTiles();
+  tileTransitionUntil = Date.now() + TILE_FADE_MS + 50;
+  if (tileTransitionTimer) {
+    clearTimeout(tileTransitionTimer);
+  }
+  if (similarTileItems.length) {
+    tileTransitionTimer = setTimeout(() => {
+      tileTransitionTimer = null;
+      renderTileItems(similarTileItems, "similar");
+    }, TILE_FADE_MS + 50);
+  }
+}
+
+function scheduleRecommendedAutoClose() {
+  clearRecommendedAutoCloseTimer();
+  if (displayTileSource !== "recommended" || !recommendedTileItems.length) {
+    return;
+  }
+  recommendedAutoCloseTimer = setTimeout(() => {
+    recommendedAutoCloseTimer = null;
+    if (displayTileSource === "recommended" && recommendedTileItems.length) {
+      closeRecommendedTiles();
+    }
+  }, RECOMMENDED_AUTO_CLOSE_MS);
+}
+
 function renderTileItems(items, source) {
   const prevSource = displayTileSource;
   displayTileSource = source;
   updateRecommendedControls();
+  if (source === "recommended" && items.length > 0) {
+    scheduleRecommendedAutoClose();
+  } else {
+    clearRecommendedAutoCloseTimer();
+  }
   if (Date.now() < tilePausedUntil) return;
   if (Date.now() < tileTransitionUntil) return;
   if (prevSource !== displayTileSource) {
@@ -689,7 +734,7 @@ setInterval(() => {
 }, 1000);
 
 function connectImageTile() {
-  tileWs = new WebSocket(`${liveWsOrigin}/ws_image_tile/${userId}`);
+  tileWs = new WebSocket(`${liveWsOrigin}/ws_image_tile/${sessionId}`);
 
   tileWs.onmessage = (e) => {
     const msg = JSON.parse(e.data);
@@ -789,20 +834,7 @@ startBtn.addEventListener("click", async () => {
 });
 
 closeRecommendedBtn.addEventListener("click", () => {
-  recommendedTileItems = [];
-  displayTileSource = "similar";
-  updateRecommendedControls();
-  fadeOutAllTiles();
-  tileTransitionUntil = Date.now() + TILE_FADE_MS + 50;
-  if (tileTransitionTimer) {
-    clearTimeout(tileTransitionTimer);
-  }
-  if (similarTileItems.length) {
-    tileTransitionTimer = setTimeout(() => {
-      tileTransitionTimer = null;
-      renderTileItems(similarTileItems, "similar");
-    }, TILE_FADE_MS + 50);
-  }
+  closeRecommendedTiles();
 });
 
 flipCameraBtn.addEventListener("click", async () => {

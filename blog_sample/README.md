@@ -28,13 +28,13 @@ From the repository root:
 
 ```bash
 export UV_CACHE_DIR=/tmp/uv-cache
-uv run --project hosted_app uvicorn blog_sample.app.main:app --host 127.0.0.1 --port 8000
+uv run --project hosted_app uvicorn blog_sample.app.main:app --host 127.0.0.1 --port 8080
 ```
 
 Open:
 
 ```text
-http://127.0.0.1:8000/
+http://127.0.0.1:8080/
 ```
 
 ## Environment

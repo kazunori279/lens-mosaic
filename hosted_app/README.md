@@ -100,10 +100,10 @@ When you run `hosted_app` locally, serve it over HTTPS on your LAN so the same s
 is reachable from both your desktop browser and smartphones on the same network. Use
 this as the default local workflow instead of a localhost-only server.
 
-If port `8081` is already in use, stop the existing process first:
+If port `8080` is already in use, stop the existing process first:
 
 ```bash
-lsof -nP -iTCP:8081 -sTCP:LISTEN
+lsof -nP -iTCP:8080 -sTCP:LISTEN
 kill <PID>
 ```
 
@@ -112,7 +112,7 @@ URL, and QR code:
 
 ```bash
 export LENS_MOSAIC_LAN_IP="$(ipconfig getifaddr en0 || ipconfig getifaddr en1)"
-export LENS_MOSAIC_URL="https://${LENS_MOSAIC_LAN_IP}:8081/"
+export LENS_MOSAIC_URL="https://${LENS_MOSAIC_LAN_IP}:8080/"
 printf '%s\n' "$LENS_MOSAIC_URL"
 ```
 
@@ -161,7 +161,7 @@ Start the hosted app over HTTPS:
 cd hosted_app/app
 uv run --project .. uvicorn main:app \
   --host 0.0.0.0 \
-  --port 8081 \
+  --port 8080 \
   --ssl-keyfile certs/lan-key.pem \
   --ssl-certfile certs/lan-cert.pem
 ```
@@ -221,8 +221,8 @@ the user scan it from their smartphone.
 
 ### 2. Local testing checklist
 
-- `curl -k https://YOUR_LAN_IP:8081/health` succeeds from your Mac
-- `curl -k -X POST https://YOUR_LAN_IP:8081/search ...` returns search results
+- `curl -k https://YOUR_LAN_IP:8080/health` succeeds from your Mac
+- `curl -k -X POST https://YOUR_LAN_IP:8080/search ...` returns search results
 - the root URL serves the HTML app on your desktop browser
 - the phone can open the local HTTPS URL
 - the certificate warning can be accepted once in Safari

@@ -15,7 +15,7 @@ import queue
 import threading
 from dataclasses import dataclass, field
 from pathlib import Path
-from time import perf_counter
+from time import perf_counter, sleep
 
 import vertexai
 from dotenv import load_dotenv
@@ -50,6 +50,8 @@ SEARCH_TOP_K = 100
 COLLECTION_ID = os.getenv("LENS_MOSAIC_COLLECTION_ID", "mercari3m-collection-mm2")
 DEFAULT_IMAGE_MIME_TYPE = "image/jpeg"
 RRF_K = 60.0
+EMBEDDING_MAX_RETRIES = 3
+EMBEDDING_RETRY_BASE_DELAY_SECONDS = 0.5
 
 
 @dataclass(frozen=True)
@@ -178,14 +180,30 @@ def _embed_with_gemini_embedding_2(
     config = types.EmbedContentConfig(
         output_dimensionality=ACTIVE_COLLECTION.output_dimensionality
     )
-    response = embedding_client.models.embed_content(
-        model=ACTIVE_COLLECTION.embedding_model,
-        contents=contents,
-        config=config,
-    )
-    if not response.embeddings:
-        raise RuntimeError("Gemini embedding request returned no embeddings")
-    return list(response.embeddings[0].values)
+    for attempt in range(EMBEDDING_MAX_RETRIES + 1):
+        try:
+            response = embedding_client.models.embed_content(
+                model=ACTIVE_COLLECTION.embedding_model,
+                contents=contents,
+                config=config,
+            )
+            if not response.embeddings:
+                raise RuntimeError("Gemini embedding request returned no embeddings")
+            return list(response.embeddings[0].values)
+        except genai.errors.APIError as exc:
+            if exc.status != "RESOURCE_EXHAUSTED" or attempt >= EMBEDDING_MAX_RETRIES:
+                raise
+            delay_seconds = EMBEDDING_RETRY_BASE_DELAY_SECONDS * (2**attempt)
+            logger.warning(
+                "Embedding request hit RESOURCE_EXHAUSTED; retrying in %.1fs "
+                "(attempt %d/%d)",
+                delay_seconds,
+                attempt + 1,
+                EMBEDDING_MAX_RETRIES,
+            )
+            sleep(delay_seconds)
+
+    raise RuntimeError("Embedding retry loop exited unexpectedly")
 
 
 def _generate_query_embedding(
@@ -413,12 +431,14 @@ You are a helpful AI shopping assistant.
 
 
 @dataclass
-class UserSession:
-    user_id: str
+class SessionState:
+    session_id: str
+    user_id: str | None = None
     latest_image: bytes | None = None
     similar: list[dict] = field(default_factory=list)
     recommended: list[dict] = field(default_factory=list)
     tile_clients: set[WebSocket] = field(default_factory=set)
+    live_clients: int = 0
     image_version: int = 0
     search_enqueued: bool = False
     search_running: bool = False
@@ -435,7 +455,7 @@ class UserSession:
                 self.search_enqueued = True
                 should_enqueue = True
         if should_enqueue:
-            SEARCH_REQUEST_QUEUE.put(self.user_id)
+            SEARCH_REQUEST_QUEUE.put(self.session_id)
 
     def stop(self) -> None:
         with self.state_lock:
@@ -450,7 +470,7 @@ class UserSession:
                 self.search_enqueued = True
                 should_enqueue = True
         if should_enqueue:
-            SEARCH_REQUEST_QUEUE.put(self.user_id)
+            SEARCH_REQUEST_QUEUE.put(self.session_id)
 
     def begin_search(self) -> tuple[bytes, int] | None:
         with self.state_lock:
@@ -493,7 +513,7 @@ class UserSession:
         )
 
 
-SESSIONS: dict[str, UserSession] = {}
+SESSION_STATES: dict[str, SessionState] = {}
 SESSION_SERVICE = InMemorySessionService()
 RUNNER = Runner(app_name=APP_NAME, agent=agent, session_service=SESSION_SERVICE)
 RUN_CONFIG = RunConfig(
@@ -506,18 +526,25 @@ SEARCH_REQUEST_QUEUE: queue.Queue[str | None] = queue.Queue()
 SEARCH_WORKER: threading.Thread | None = None
 
 
-def session_for(user_id: str) -> UserSession:
-    if user_id not in SESSIONS:
-        SESSIONS[user_id] = UserSession(user_id)
-    return SESSIONS[user_id]
+def session_state_for(
+    session_id: str, user_id: str | None = None
+) -> SessionState:
+    state = SESSION_STATES.get(session_id)
+    if state is None:
+        state = SessionState(session_id=session_id, user_id=user_id)
+        SESSION_STATES[session_id] = state
+        return state
+    if user_id is not None:
+        state.user_id = user_id
+    return state
 
 
-def cleanup(user_id: str, session: UserSession) -> None:
-    if session.tile_clients:
+def cleanup(session_id: str, session: SessionState) -> None:
+    if session.tile_clients or session.live_clients > 0:
         return
     session.stop()
-    SESSIONS.pop(user_id, None)
-    logger.info("Cleaned up session for %s", user_id)
+    SESSION_STATES.pop(session_id, None)
+    logger.info("Cleaned up session state for %s", session_id)
 
 
 def search_text_queries_sync(queries: list[str], user_request: str) -> list[dict]:
@@ -531,9 +558,9 @@ def search_text_queries_sync(queries: list[str], user_request: str) -> list[dict
 
 
 async def _publish_similar_results(
-    user_id: str, processed_version: int, results: list[dict]
+    session_id: str, processed_version: int, results: list[dict]
 ) -> None:
-    session = SESSIONS.get(user_id)
+    session = SESSION_STATES.get(session_id)
     if session is None or not session.should_publish_similar():
         return
     session.similar = results
@@ -542,11 +569,11 @@ async def _publish_similar_results(
 
 def _search_worker_loop() -> None:
     while True:
-        user_id = SEARCH_REQUEST_QUEUE.get()
-        if user_id is None:
+        session_id = SEARCH_REQUEST_QUEUE.get()
+        if session_id is None:
             return
 
-        session = SESSIONS.get(user_id)
+        session = SESSION_STATES.get(session_id)
         if session is None:
             continue
 
@@ -558,16 +585,16 @@ def _search_worker_loop() -> None:
         try:
             results = _collection_search(image=image)
         except Exception as exc:
-            logger.error("Search error for %s: %s", user_id, exc, exc_info=True)
+            logger.error("Search error for %s: %s", session_id, exc, exc_info=True)
         else:
             if MAIN_LOOP is not None:
                 asyncio.run_coroutine_threadsafe(
-                    _publish_similar_results(user_id, processed_version, results),
+                    _publish_similar_results(session_id, processed_version, results),
                     MAIN_LOOP,
                 )
 
         if session.finish_search(processed_version):
-            SEARCH_REQUEST_QUEUE.put(user_id)
+            SEARCH_REQUEST_QUEUE.put(session_id)
 
 
 def _ensure_search_worker() -> None:
@@ -611,7 +638,7 @@ def find_items(
     Returns:
         A comma-separated string of top matched item names, or "No items found".
     """
-    session = session_for(tool_context.session.user_id)
+    session = session_state_for(tool_context.session.id, tool_context.session.user_id)
     session.recommended = search_text_queries_sync(queries, user_request)
     if MAIN_LOOP:
         asyncio.run_coroutine_threadsafe(
@@ -641,7 +668,7 @@ async def ensure_adk_session(user_id: str, session_id: str) -> None:
 
 
 async def client_to_agent(
-    ws: WebSocket, session: UserSession, queue: LiveRequestQueue
+    ws: WebSocket, session: SessionState, queue: LiveRequestQueue
 ) -> None:
     while True:
         message = await ws.receive()
@@ -772,10 +799,10 @@ def health():
     }
 
 
-@app.websocket("/ws_image_tile/{user_id}")
-async def tile_socket(ws: WebSocket, user_id: str) -> None:
+@app.websocket("/ws_image_tile/{session_id}")
+async def tile_socket(ws: WebSocket, session_id: str) -> None:
     await ws.accept()
-    session = session_for(user_id)
+    session = session_state_for(session_id)
     session.tile_clients.add(ws)
     try:
         await session.snapshot(ws)
@@ -785,7 +812,7 @@ async def tile_socket(ws: WebSocket, user_id: str) -> None:
         pass
     finally:
         session.tile_clients.discard(ws)
-        cleanup(user_id, session)
+        cleanup(session_id, session)
 
 
 @app.websocket("/ws/{user_id}/{session_id}")
@@ -793,7 +820,8 @@ async def live_socket(ws: WebSocket, user_id: str, session_id: str) -> None:
     await ws.accept()
     await ensure_adk_session(user_id, session_id)
 
-    session = session_for(user_id)
+    session = session_state_for(session_id, user_id)
+    session.live_clients += 1
     session.start()
     queue = LiveRequestQueue()
 
@@ -813,4 +841,5 @@ async def live_socket(ws: WebSocket, user_id: str, session_id: str) -> None:
         logger.error("Streaming error: %s", exc, exc_info=True)
     finally:
         queue.close()
-        cleanup(user_id, session)
+        session.live_clients -= 1
+        cleanup(session_id, session)
