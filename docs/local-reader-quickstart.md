@@ -58,7 +58,7 @@ http://127.0.0.1:8081/
 Notes:
 
 - `127.0.0.1` only works when the browser runs on the same machine as the local app server.
-- If you want phone camera access, run the hosted app over HTTPS on your LAN as described in [hosted_app/README.md](/Users/kaz/Documents/GitHub/lens-mosaic/hosted_app/README.md).
+- If you want phone camera access, run the hosted app over HTTPS on your LAN as described in [hosted_app/README.md](../hosted_app/README.md).
 
 ## 4. Quick checks
 

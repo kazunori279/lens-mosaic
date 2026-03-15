@@ -389,7 +389,7 @@ You are a helpful AI shopping assistant.
   2. Tell the user that you will search for the items similar to them.
   For exmaple, "Looks like it's a KEF speaker. Let me find similar items."
   3. Call find_items with descriptive English text queries and also pass the
-  user's original request as user_request.
+  user intent as user_request.
 - After find_items returns, read the product names to the user,
   simplified to a few words each. For example: "I found a KEF speaker,
   a bookshelf speaker, and a wireless subwoofer. They are now showing on your screen."
@@ -402,9 +402,9 @@ You are a helpful AI shopping assistant.
   1. Do not ask the user a follow-up question before searching.
   2. Tell the user that you will search for the items they requested.
   3. Use google_search to research what products would be a good match for the user's request.
-  4. From the search results, generate a few specific product description queries.
-  5. Call find_items with those queries and also pass the user's original
-  request as user_request.
+  4. From the search results, generate 5 product description queries.
+  5. Call find_items with those queries and also pass the user intent as
+  user_request.
 - After find_items returns, read the product names to the user,
   simplified to a few words each. For example: "I found a KEF speaker,
   a bookshelf speaker, and a wireless subwoofer. They are now showing on your screen."
@@ -599,16 +599,13 @@ def find_items(
     """Find shopping items that match one or more product description queries.
 
     Use this tool when you want to show the user product candidates on screen.
-    Provide a short list of descriptive English shopping queries such as product
-    names, styles, materials, colors, or use cases. The tool searches Mercari,
-    publishes the matched items to the UI, and uses the original user request
-    for the final Ranking API rerank across all merged candidates. It returns a
-    short comma-separated summary of the top item names for the agent to mention
-    out loud.
+    Provide a list of descriptive English product-search queries The tool 
+    searches and publishes the matched items to the UI, and uses the user_request 
+    for the final Ranking API rerank across all merged candidates. 
 
     Args:
         queries: One or more descriptive English product-search queries.
-        user_request: The user's original request in their own words.
+        user_request: The user's intent for finding items.
         tool_context: ADK tool context for the current user session.
 
     Returns:
@@ -746,7 +743,6 @@ def rank_endpoint(req: RankRequest):
     return _rank_results(req.query, results)
 
 
-@app.get("/item/{item_id}", response_model=ItemDetails)
 def get_item(item_id: str):
     """Get item details by ID."""
     logger.info("Item request: item_id=%s", item_id)

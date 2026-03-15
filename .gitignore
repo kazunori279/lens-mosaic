@@ -8,3 +8,4 @@ local_live/app/certs/
 hosted_app/app/certs/*.pem
 hosted_app/app/certs/*.key
 hosted_app/app/certs/*.crt
+blog_sample/app/.env

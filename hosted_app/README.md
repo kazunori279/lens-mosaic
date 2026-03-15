@@ -387,4 +387,4 @@ For a Cloud Run deployment:
   log separately from the basic LAN/HTTPS setup. A page load proves the LAN path is
   working.
 - For a localhost-only development loop, see
-  [docs/local-reader-quickstart.md](/Users/kaz/Documents/GitHub/lens-mosaic/docs/local-reader-quickstart.md).
+  [docs/local-reader-quickstart.md](../docs/local-reader-quickstart.md).
