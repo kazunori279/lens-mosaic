@@ -20,16 +20,24 @@ Current differences from `hosted_app`:
 ## Files
 
 - `app/main.py`: minimal sample server
-- `app/.env`: local sample configuration
 
 ## Run locally
 
 From the repository root:
 
 ```bash
-export UV_CACHE_DIR=/tmp/uv-cache
-uv run --project hosted_app uvicorn blog_sample.app.main:app --host 127.0.0.1 --port 8080
+export GOOGLE_CLOUD_PROJECT=gcp-samples-ic0
+export GOOGLE_CLOUD_LOCATION=us-central1
+uv run \
+  --with google-adk \
+  --with google-genai \
+  --with google-cloud-aiplatform \
+  --with certifi \
+  uvicorn blog_sample.app.main:app --host 127.0.0.1 --port 8080
 ```
+
+This uses a blog-sample-specific runtime instead of reusing the `hosted_app`
+project environment.
 
 Open:
 
@@ -39,15 +47,13 @@ http://127.0.0.1:8080/
 
 ## Environment
 
-`blog_sample/app/.env` is the source of truth for the sample configuration.
-
-Important values:
+- Set these shell variables before running `uv`:
 
 - `GOOGLE_CLOUD_PROJECT`: Vertex AI project for local live testing
+- `GOOGLE_CLOUD_LOCATION`: Vertex AI region for the live model
 
 These values are currently hardcoded in `blog_sample/app/main.py`:
 
-- `GOOGLE_CLOUD_LOCATION=us-central1`
 - `LENS_MOSAIC_COLLECTION_ID=mercari3m-collection-mm2`
 - `LENS_MOSAIC_HOSTED_URL=https://lens-mosaic-nhhfh7g7iq-uc.a.run.app`
 

@@ -5,11 +5,9 @@ from __future__ import annotations
 import asyncio, base64, json, os, ssl
 import urllib.error, urllib.parse, urllib.request
 from dataclasses import dataclass, field
-from pathlib import Path
 
 import certifi
 from fastapi import FastAPI, Request, Response, WebSocket, WebSocketDisconnect
-from dotenv import load_dotenv
 from google.adk.agents import Agent
 from google.adk.agents.live_request_queue import LiveRequestQueue
 from google.adk.agents.run_config import RunConfig, StreamingMode
@@ -24,16 +22,14 @@ import vertexai
 APP_NAME = "lens-mosaic-blog-sample"
 AGENT_MODEL = "gemini-live-2.5-flash-native-audio"
 MAX_TILE_ITEMS = 64
-GOOGLE_CLOUD_LOCATION = "us-central1"
+GOOGLE_CLOUD_PROJECT = os.environ["GOOGLE_CLOUD_PROJECT"]
+GOOGLE_CLOUD_LOCATION = os.environ["GOOGLE_CLOUD_LOCATION"]
 LENS_MOSAIC_COLLECTION_ID = "mercari3m-collection-mm2"
 HOSTED_URL = "https://lens-mosaic-nhhfh7g7iq-uc.a.run.app"
-ENV_FILE = Path(__file__).with_name(".env")
-if ENV_FILE.exists():
-    load_dotenv(ENV_FILE, override=True)
 # The blog sample reuses the deployed hosted app for UI and catalog APIs.
 
 vertexai.init(
-    project=os.getenv("GOOGLE_CLOUD_PROJECT"),
+    project=GOOGLE_CLOUD_PROJECT,
     location=GOOGLE_CLOUD_LOCATION,
 )
 
