@@ -7,7 +7,6 @@ LensMosaic now targets a single-origin architecture from the same codebase:
 1. Local development mode
    - Local hosted UI
    - Local search API
-   - Local live API server
 2. Public demo mode
    - Hosted UI
    - Hosted public search API
@@ -21,9 +20,6 @@ lens-mosaic/
 │   └── app/
 │       ├── main.py
 │       └── static/
-├── local_live/
-│   └── app/
-│       └── main.py
 ├── docs/
 └── README.md
 ```
