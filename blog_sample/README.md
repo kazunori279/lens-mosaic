@@ -60,7 +60,7 @@ These values are currently hardcoded in `blog_sample/app/main.py`:
 The proxied `/search` endpoint now expects:
 
 - `queries`: a short list of English product-search queries
-- `user_intent`: the user goal used for final reranking
+- `ranking_query`: a short English item description used for final reranking
 
 ## Use case
 

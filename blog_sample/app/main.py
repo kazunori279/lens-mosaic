@@ -126,17 +126,28 @@ async def broadcast_recommended(session_id: str, items: list[dict]) -> None:
 
 
 # Tool and agent definitions for the local live assistant.
-def find_items(queries: list[str], user_intent: str, tool_context: ToolContext) -> str:
+def find_items(
+    queries: list[str], ranking_query: str, tool_context: ToolContext
+) -> str:
     """Find shopping items that match one or more product description queries.
 
     Use this tool to show product candidates on screen. Provide descriptive
-    product-search queries and user intent in English. The tool searches, 
-    publishes the matched items to the UI, and uses user_intent for the 
+    product-search queries and a ranking query in English. The tool searches,
+    publishes the matched items to the UI, and uses ranking_query for the
     final rerank across the candidates.
+
+    Guidance:
+    - queries are broad English recall queries.
+    - ranking_query is a short English description of the items the user wants
+      to see.
+    - ranking_query should describe product attributes, category, style, use
+      case, or compatibility when helpful.
+    - Do not phrase ranking_query as a task such as "identify the item" or
+      "find similar products".
 
     Args:
         queries: One or more product-search queries in English.
-        user_intent: The user's intent for finding items in English.
+        ranking_query: A short English description used for final reranking.
         tool_context: ADK tool context for the current user session.
 
     Returns:
@@ -145,7 +156,9 @@ def find_items(queries: list[str], user_intent: str, tool_context: ToolContext) 
     status, _, body = fetch_upstream(
         "/search",
         method="POST",
-        body=json.dumps({"queries": queries[:4], "user_intent": user_intent}).encode(),
+        body=json.dumps(
+            {"queries": queries[:4], "ranking_query": ranking_query}
+        ).encode(),
         content_type="application/json",
     )
     items = [] if status >= 400 else json.loads(body.decode())
@@ -172,8 +185,8 @@ agent = Agent(
         When user asks for finding items, recommendation, or matching-product requests:
         - Do not ask a follow-up question before searching.
         - Briefly say what you will search.
-        - Infer the user intent from the conversation and camera context.
-        - Call find_items with 5 descriptive queries and the user intent
+        - Infer the desired items from the conversation and camera context.
+        - Call find_items with 5 descriptive queries and a short English ranking_query
         - After find_items returns, mention a few item names in simple language.""",
 )
 RUNNER = Runner(app_name=APP_NAME, agent=agent, session_service=SESSION_SERVICE)

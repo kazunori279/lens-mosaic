@@ -63,7 +63,7 @@ Notes:
 ## 4. Quick checks
 
 - `http://127.0.0.1:8080/health`
-- `curl -X POST http://127.0.0.1:8080/search -H 'content-type: application/json' -d '{"queries":["speaker","bookshelf speaker"],"user_intent":"find a speaker for a small room"}'`
+- `curl -X POST http://127.0.0.1:8080/search -H 'content-type: application/json' -d '{"queries":["speaker","bookshelf speaker"],"ranking_query":"compact speaker for a small room"}'`
 
 ## 5. Expected behavior
 

@@ -118,7 +118,7 @@ rank_client = discoveryengine.RankServiceClient()
 
 class SearchRequest(BaseModel):
     queries: list[str]
-    user_intent: str
+    ranking_query: str
 
 
 class SearchResult(BaseModel):
@@ -406,8 +406,8 @@ You are a helpful AI shopping assistant.
   1. Do not ask the user a follow-up question before searching.
   2. Tell the user that you will search for the items similar to them.
   For exmaple, "Looks like it's a KEF speaker. Let me find similar items."
-  3. Call find_items with descriptive English text queries and also pass the
-  user intent as user_intent.
+  3. Call find_items with descriptive English text queries and a short
+  English ranking_query that describes the items the user wants to see.
 - After find_items returns, read the product names to the user,
   simplified to a few words each. For example: "I found a KEF speaker,
   a bookshelf speaker, and a wireless subwoofer. They are now showing on your screen."
@@ -421,8 +421,8 @@ You are a helpful AI shopping assistant.
   2. Tell the user that you will search for the items they requested.
   3. Use google_search to research what products would be a good match for the user's request.
   4. From the search results, generate 5 product description queries.
-  5. Call find_items with those queries and also pass the user intent as
-  user_intent.
+  5. Call find_items with those queries and a short English ranking_query
+  that describes the desired items.
 - After find_items returns, read the product names to the user,
   simplified to a few words each. For example: "I found a KEF speaker,
   a bookshelf speaker, and a wireless subwoofer. They are now showing on your screen."
@@ -547,14 +547,14 @@ def cleanup(session_id: str, session: SessionState) -> None:
     logger.info("Cleaned up session state for %s", session_id)
 
 
-def search_text_queries_sync(queries: list[str], user_intent: str) -> list[dict]:
+def search_text_queries_sync(queries: list[str], ranking_query: str) -> list[dict]:
     seen, items = set(), []
     for query in queries:
         for item in _collection_search(text=query, rerank=False):
             if item["id"] not in seen:
                 seen.add(item["id"])
                 items.append(item)
-    return _rank_results(user_intent.strip(), items)
+    return _rank_results(ranking_query.strip(), items)
 
 
 async def _publish_similar_results(
@@ -621,25 +621,34 @@ def _stop_search_worker() -> None:
 
 
 def find_items(
-    queries: list[str], user_intent: str, tool_context: ToolContext
+    queries: list[str], ranking_query: str, tool_context: ToolContext
 ) -> str:
     """Find shopping items that match one or more product description queries.
 
     Use this tool when you want to show the user product candidates on screen.
-    Provide a list of descriptive English product-search queries The tool 
-    searches and publishes the matched items to the UI, and uses the user_intent 
-    for the final Ranking API rerank across all merged candidates. 
+    Provide a list of descriptive English product-search queries. The tool
+    searches and publishes the matched items to the UI, then uses ranking_query
+    for the final Ranking API rerank across all merged candidates.
+
+    Guidance:
+    - queries are broad English recall queries.
+    - ranking_query is a short English description of the items the user wants
+      to see.
+    - ranking_query should describe product attributes, category, style, use
+      case, or compatibility when helpful.
+    - Do not phrase ranking_query as a task such as "identify the item" or
+      "find similar products".
 
     Args:
         queries: One or more descriptive English product-search queries.
-        user_intent: The user's intent for finding items.
+        ranking_query: A short English description used for final reranking.
         tool_context: ADK tool context for the current user session.
 
     Returns:
         A comma-separated string of top matched item names, or "No items found".
     """
     session = session_state_for(tool_context.session.id, tool_context.session.user_id)
-    session.recommended = search_text_queries_sync(queries, user_intent)
+    session.recommended = search_text_queries_sync(queries, ranking_query)
     if MAIN_LOOP:
         asyncio.run_coroutine_threadsafe(
             session.send({"kind": "recommended", "items": session.recommended}),
@@ -647,8 +656,8 @@ def find_items(
         )
     names = [item["name"] for item in session.recommended[:3]]
     logger.info(
-        "find_items(user_intent=%r, queries=%s) -> %s items",
-        user_intent,
+        "find_items(ranking_query=%r, queries=%s) -> %s items",
+        ranking_query,
         queries,
         len(session.recommended),
     )
@@ -748,17 +757,19 @@ async def root():
 
 @app.post("/search", response_model=list[SearchResult])
 def search_endpoint(req: SearchRequest):
-    """Search with multiple recall queries and a final intent rerank."""
+    """Search with multiple recall queries and a final ranking query rerank."""
     queries = [query.strip() for query in req.queries if query.strip()]
-    user_intent = req.user_intent.strip()
+    ranking_query = req.ranking_query.strip()
     if not queries:
         raise HTTPException(
             status_code=400, detail="queries must include at least one non-empty string"
         )
-    if not user_intent:
-        raise HTTPException(status_code=400, detail="user_intent must be a non-empty string")
-    logger.info("Search request: user_intent=%r, queries=%s", user_intent, queries)
-    return search_text_queries_sync(queries, user_intent)
+    if not ranking_query:
+        raise HTTPException(
+            status_code=400, detail="ranking_query must be a non-empty string"
+        )
+    logger.info("Search request: ranking_query=%r, queries=%s", ranking_query, queries)
+    return search_text_queries_sync(queries, ranking_query)
 
 
 @app.post("/rank", response_model=list[SearchResult])

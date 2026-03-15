@@ -177,7 +177,7 @@ Run a basic text search check from your Mac:
 ```bash
 curl -k -X POST "${LENS_MOSAIC_URL}search" \
   -H 'Content-Type: application/json' \
-  -d '{"queries":["red handbag","small red purse"],"user_intent":"find a red handbag for daily use"}'
+  -d '{"queries":["red handbag","small red purse"],"ranking_query":"small red handbag for daily use"}'
 ```
 
 Current local image-search latency on `mercari3m-collection-mm2` is roughly:
@@ -330,7 +330,7 @@ Check search with a text query:
 ```bash
 curl -X POST "$(gcloud run services describe lens-mosaic --project "${GOOGLE_CLOUD_PROJECT}" --region "${GOOGLE_CLOUD_LOCATION}" --format='value(status.url)')/search" \
   -H 'Content-Type: application/json' \
-  -d '{"queries":["red handbag","small red purse"],"user_intent":"find a red handbag for daily use"}'
+  -d '{"queries":["red handbag","small red purse"],"ranking_query":"small red handbag for daily use"}'
 ```
 
 Open the app:
