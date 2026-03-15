@@ -7,12 +7,19 @@ LensMosaic now runs as a single-origin app from the same server for:
 - item detail APIs
 - live WebSocket sessions
 
+This repo also includes a smaller `blog_sample` app for tutorials and blog posts.
+
 ## Supported Mode
 
 ### Hosted App
 
 - Open the app directly from the server you started or deployed
 - Use the same origin for UI, search, item details, and live WebSockets
+
+### Blog Sample
+
+- Run a smaller local ADK sample with the existing hosted UI proxied from Cloud Run
+- Use this when you want easier-to-read example code rather than the full app
 
 ## What Is Working
 
@@ -25,6 +32,8 @@ LensMosaic now runs as a single-origin app from the same server for:
 
 ```text
 lens-mosaic/
+├── blog_sample/
+│   └── app/
 ├── README.md
 ├── docs/
 ├── hosted_app/
@@ -39,6 +48,7 @@ lens-mosaic/
 ## Start Here
 
 - [Local reader quickstart](docs/local-reader-quickstart.md)
+- [Blog sample README](blog_sample/README.md)
 - [Hosted app README](hosted_app/README.md)
 - [Cloud Run deployment](docs/deploy-cloud-run.md)
 - [Usage modes](docs/usage-modes.md)

@@ -2,6 +2,9 @@
 
 `hosted_app` is the Cloud Run service for LensMosaic.
 
+If you want a much smaller local example for documentation or tutorials, see
+[`blog_sample/README.md`](../blog_sample/README.md).
+
 It serves:
 
 - static UI assets
