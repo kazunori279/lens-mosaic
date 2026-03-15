@@ -28,8 +28,14 @@ let similarTileItems = [];
 let recommendedTileItems = [];
 let lastAgentVisionSentAt = 0;
 
-const userId = "user-" + Math.random().toString(36).slice(2, 8);
-const sessionId = "session-" + Date.now();
+function generateClientId(prefix) {
+  const value = window.crypto?.randomUUID?.()
+    ?? `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+  return `${prefix}-${value}`;
+}
+
+const userId = generateClientId("user");
+const sessionId = generateClientId("session");
 const appOrigin = window.location.origin;
 const liveWsOrigin = toWebSocketOrigin(appOrigin);
 

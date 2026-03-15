@@ -51,6 +51,9 @@ Set `LENS_MOSAIC_COLLECTION_ID=mercari3m-collection-mm2`.
 The hosted app now supports only the Gemini Embedding collection and derives the
 vector fields from that collection ID.
 
+Set `LENS_MOSAIC_SIMILAR_SEARCH_WORKERS` to control the number of background
+workers used for camera-driven similar search. The default is `4`.
+
 If you run these commands in Codex or another sandboxed environment, set:
 
 ```bash

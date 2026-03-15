@@ -52,6 +52,7 @@ DEFAULT_IMAGE_MIME_TYPE = "image/jpeg"
 RRF_K = 60.0
 EMBEDDING_MAX_RETRIES = 3
 EMBEDDING_RETRY_BASE_DELAY_SECONDS = 0.5
+SIMILAR_SEARCH_WORKER_ENV = "LENS_MOSAIC_SIMILAR_SEARCH_WORKERS"
 
 
 @dataclass(frozen=True)
@@ -92,12 +93,24 @@ def _env_flag(name: str, default: bool = False) -> bool:
     return value.strip().lower() in {"1", "true", "yes", "on"}
 
 
+def _env_int(name: str, default: int) -> int:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    try:
+        return int(value)
+    except ValueError as exc:
+        raise RuntimeError(f"{name} must be an integer, got {value!r}") from exc
+
+
 LIVE_USE_VERTEXAI = _env_flag("GOOGLE_GENAI_USE_VERTEXAI")
 LIVE_PROVIDER = "vertex-ai" if LIVE_USE_VERTEXAI else "gemini-api"
 AGENT_MODEL = (
     DEFAULT_VERTEX_AGENT_MODEL if LIVE_USE_VERTEXAI else DEFAULT_GEMINI_AGENT_MODEL
 )
 LIVE_API_KEY_PRESENT = bool(os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY"))
+TEST_ENDPOINTS_ENABLED = _env_flag("LENS_MOSAIC_ENABLE_TEST_ENDPOINTS")
+SIMILAR_SEARCH_WORKER_COUNT = max(1, _env_int(SIMILAR_SEARCH_WORKER_ENV, default=4))
 
 logging.basicConfig(
     level=logging.INFO,
@@ -140,6 +153,28 @@ class ItemDetails(BaseModel):
     price: str
     url: str
     img_url: str
+
+
+class FindItemsTestRequest(BaseModel):
+    user_id: str
+    session_id: str
+    queries: list[str]
+    ranking_query: str
+    publish: bool = True
+
+
+class SimilarSearchTestRequest(BaseModel):
+    user_id: str
+    session_id: str
+    image_b64: str
+
+
+class FindItemsTestResponse(BaseModel):
+    user_id: str
+    session_id: str
+    item_ids: list[str]
+    item_names: list[str]
+    latency_ms: float
 
 
 def _collection_path() -> str:
@@ -507,6 +542,8 @@ class SessionState:
         await ws.send_json(
             {
                 "kind": "snapshot",
+                "sessionId": self.session_id,
+                "userId": self.user_id,
                 "similarItems": self.similar,
                 "recommendedItems": self.recommended,
             }
@@ -523,7 +560,7 @@ RUN_CONFIG = RunConfig(
 )
 MAIN_LOOP: asyncio.AbstractEventLoop | None = None
 SEARCH_REQUEST_QUEUE: queue.Queue[str | None] = queue.Queue()
-SEARCH_WORKER: threading.Thread | None = None
+SEARCH_WORKERS: list[threading.Thread] = []
 
 
 def session_state_for(
@@ -564,13 +601,21 @@ async def _publish_similar_results(
     if session is None or not session.should_publish_similar():
         return
     session.similar = results
-    await session.send({"kind": "similar", "items": results})
+    await session.send(
+        {
+            "kind": "similar",
+            "sessionId": session.session_id,
+            "userId": session.user_id,
+            "items": results,
+        }
+    )
 
 
-def _search_worker_loop() -> None:
+def _search_worker_loop(worker_id: int) -> None:
     while True:
         session_id = SEARCH_REQUEST_QUEUE.get()
         if session_id is None:
+            logger.info("Similar search worker %d received shutdown signal", worker_id)
             return
 
         session = SESSION_STATES.get(session_id)
@@ -585,7 +630,13 @@ def _search_worker_loop() -> None:
         try:
             results = _collection_search(image=image)
         except Exception as exc:
-            logger.error("Search error for %s: %s", session_id, exc, exc_info=True)
+            logger.error(
+                "Similar search worker %d error for %s: %s",
+                worker_id,
+                session_id,
+                exc,
+                exc_info=True,
+            )
         else:
             if MAIN_LOOP is not None:
                 asyncio.run_coroutine_threadsafe(
@@ -597,27 +648,75 @@ def _search_worker_loop() -> None:
             SEARCH_REQUEST_QUEUE.put(session_id)
 
 
-def _ensure_search_worker() -> None:
-    global SEARCH_WORKER
-    if SEARCH_WORKER is not None and SEARCH_WORKER.is_alive():
+def _ensure_search_workers() -> None:
+    global SEARCH_WORKERS
+    SEARCH_WORKERS = [worker for worker in SEARCH_WORKERS if worker.is_alive()]
+    if len(SEARCH_WORKERS) >= SIMILAR_SEARCH_WORKER_COUNT:
         return
-    SEARCH_WORKER = threading.Thread(
-        target=_search_worker_loop,
-        name="lens-mosaic-search-worker",
-        daemon=True,
+    start_index = len(SEARCH_WORKERS)
+    for worker_index in range(start_index, SIMILAR_SEARCH_WORKER_COUNT):
+        worker = threading.Thread(
+            target=_search_worker_loop,
+            args=(worker_index,),
+            name=f"lens-mosaic-search-worker-{worker_index}",
+            daemon=True,
+        )
+        worker.start()
+        SEARCH_WORKERS.append(worker)
+    logger.info(
+        "Started %d similar search worker threads",
+        len(SEARCH_WORKERS),
     )
-    SEARCH_WORKER.start()
-    logger.info("Started image search worker thread")
 
 
-def _stop_search_worker() -> None:
-    global SEARCH_WORKER
-    if SEARCH_WORKER is None:
+def _stop_search_workers() -> None:
+    global SEARCH_WORKERS
+    if not SEARCH_WORKERS:
         return
-    SEARCH_REQUEST_QUEUE.put(None)
-    SEARCH_WORKER.join(timeout=2.0)
-    SEARCH_WORKER = None
-    logger.info("Stopped image search worker thread")
+    workers = SEARCH_WORKERS
+    SEARCH_WORKERS = []
+    for _ in workers:
+        SEARCH_REQUEST_QUEUE.put(None)
+    for worker in workers:
+        worker.join(timeout=2.0)
+    logger.info("Stopped %d similar search worker threads", len(workers))
+
+
+def _run_find_items_for_session(
+    session_id: str,
+    user_id: str | None,
+    queries: list[str],
+    ranking_query: str,
+    publish: bool = True,
+) -> tuple[list[dict], float]:
+    session = session_state_for(session_id, user_id)
+    started_at = perf_counter()
+    session.recommended = search_text_queries_sync(queries, ranking_query)
+    latency_ms = (perf_counter() - started_at) * 1000
+    if publish and MAIN_LOOP:
+        asyncio.run_coroutine_threadsafe(
+            session.send(
+                {
+                    "kind": "recommended",
+                    "sessionId": session.session_id,
+                    "userId": session.user_id,
+                    "items": session.recommended,
+                }
+            ),
+            MAIN_LOOP,
+        )
+    logger.info(
+        "find_items session_id=%s user_id=%s ranking_query=%r queries=%s "
+        "items=%d latency_ms=%.1f publish=%s",
+        session_id,
+        user_id,
+        ranking_query,
+        queries,
+        len(session.recommended),
+        latency_ms,
+        publish,
+    )
+    return session.recommended, latency_ms
 
 
 def find_items(
@@ -647,20 +746,14 @@ def find_items(
     Returns:
         A comma-separated string of top matched item names, or "No items found".
     """
-    session = session_state_for(tool_context.session.id, tool_context.session.user_id)
-    session.recommended = search_text_queries_sync(queries, ranking_query)
-    if MAIN_LOOP:
-        asyncio.run_coroutine_threadsafe(
-            session.send({"kind": "recommended", "items": session.recommended}),
-            MAIN_LOOP,
-        )
-    names = [item["name"] for item in session.recommended[:3]]
-    logger.info(
-        "find_items(ranking_query=%r, queries=%s) -> %s items",
-        ranking_query,
-        queries,
-        len(session.recommended),
+    recommended, _ = _run_find_items_for_session(
+        session_id=tool_context.session.id,
+        user_id=tool_context.session.user_id,
+        queries=queries,
+        ranking_query=ranking_query,
+        publish=True,
     )
+    names = [item["name"] for item in recommended[:3]]
     return ", ".join(names) if names else "No items found"
 
 
@@ -729,10 +822,11 @@ app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 async def startup() -> None:
     global MAIN_LOOP
     MAIN_LOOP = asyncio.get_running_loop()
-    _ensure_search_worker()
+    _ensure_search_workers()
     logger.info("Search collection: %s", ACTIVE_COLLECTION.collection_id)
     logger.info("Search dataset: %s", ACTIVE_COLLECTION.dataset_id)
     logger.info("Search embedding model: %s", ACTIVE_COLLECTION.embedding_model)
+    logger.info("Similar search workers: %d", SIMILAR_SEARCH_WORKER_COUNT)
     logger.info("Live backend provider: %s", LIVE_PROVIDER)
     logger.info("Live backend model: %s", AGENT_MODEL)
     if LIVE_USE_VERTEXAI:
@@ -746,7 +840,7 @@ async def startup() -> None:
 @app.on_event("shutdown")
 async def shutdown() -> None:
     global MAIN_LOOP
-    _stop_search_worker()
+    _stop_search_workers()
     MAIN_LOOP = None
 
 
@@ -806,6 +900,54 @@ def health():
         "live_provider": LIVE_PROVIDER,
         "google_genai_use_vertexai": LIVE_USE_VERTEXAI,
         "agent_model": AGENT_MODEL,
+        "test_endpoints_enabled": TEST_ENDPOINTS_ENABLED,
+    }
+
+
+@app.post("/test/find_items", response_model=FindItemsTestResponse)
+def test_find_items_endpoint(req: FindItemsTestRequest):
+    if not TEST_ENDPOINTS_ENABLED:
+        raise HTTPException(status_code=404, detail="Test endpoints are disabled")
+    queries = [query.strip() for query in req.queries if query.strip()]
+    ranking_query = req.ranking_query.strip()
+    if not queries:
+        raise HTTPException(
+            status_code=400, detail="queries must include at least one non-empty string"
+        )
+    if not ranking_query:
+        raise HTTPException(
+            status_code=400, detail="ranking_query must be a non-empty string"
+        )
+    items, latency_ms = _run_find_items_for_session(
+        session_id=req.session_id,
+        user_id=req.user_id,
+        queries=queries,
+        ranking_query=ranking_query,
+        publish=req.publish,
+    )
+    return FindItemsTestResponse(
+        user_id=req.user_id,
+        session_id=req.session_id,
+        item_ids=[item["id"] for item in items],
+        item_names=[item["name"] for item in items[:3]],
+        latency_ms=latency_ms,
+    )
+
+
+@app.post("/test/similar")
+def test_similar_endpoint(req: SimilarSearchTestRequest):
+    if not TEST_ENDPOINTS_ENABLED:
+        raise HTTPException(status_code=404, detail="Test endpoints are disabled")
+    try:
+        image = base64.b64decode(req.image_b64)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail="image_b64 must be valid base64") from exc
+    session = session_state_for(req.session_id, req.user_id)
+    session.update_image(image)
+    return {
+        "status": "accepted",
+        "user_id": req.user_id,
+        "session_id": req.session_id,
     }
 
 

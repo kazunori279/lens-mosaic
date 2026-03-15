@@ -48,7 +48,7 @@ lens-mosaic/
   - tile updates at `/ws_image_tile/{user_id}`
 - Search and conversation are now intentionally split:
   - text and recommendation searches still run synchronously in-process
-  - camera-driven similar-item search runs on a dedicated background worker thread
+  - camera-driven similar-item search runs on a dedicated background worker pool
   - the main asyncio loop stays focused on live audio/text traffic and WebSocket fan-out
 - Camera frames are handled as two independent features per session:
   - `similar_search_enabled`: whether frames should drive the similar-item search worker
@@ -58,7 +58,7 @@ lens-mosaic/
   - `Agent vision`
   - This lets us test `search only`, `vision only`, `both`, or `neither` without code changes.
 - Similar-item search worker design:
-  - one process-wide queue and one dedicated worker thread
+  - one process-wide queue and a configurable worker pool
   - one latest-image slot per user session
   - no attempt to process every frame in order
   - if a new frame arrives while a search is running, the worker requeues that session and searches the latest frame next
