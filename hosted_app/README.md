@@ -265,6 +265,40 @@ gcloud run deploy lens-mosaic \
   --set-env-vars GOOGLE_GENAI_USE_VERTEXAI="${GOOGLE_GENAI_USE_VERTEXAI}",GOOGLE_CLOUD_PROJECT="${GOOGLE_CLOUD_PROJECT}",GOOGLE_CLOUD_LOCATION="${GOOGLE_CLOUD_LOCATION}",LENS_MOSAIC_COLLECTION_ID="${LENS_MOSAIC_COLLECTION_ID}",LENS_MOSAIC_GEMINI_EMBEDDING_MAX_RPM="${LENS_MOSAIC_GEMINI_EMBEDDING_MAX_RPM}"
 ```
 
+Cloud Run deployments are not instant. A normal deploy can take a few minutes
+while source upload, Cloud Build, image rollout, and revision health checks
+complete. After you start `gcloud run deploy`, wait for it to finish before
+assuming it is stuck or retrying.
+
+After each successful deploy, delete older Cloud Run revisions and keep only the
+newest five so the service revision list stays short and easy to inspect while
+still leaving a small rollback buffer.
+
+List revisions:
+
+```bash
+gcloud run revisions list \
+  --service lens-mosaic \
+  --project "${GOOGLE_CLOUD_PROJECT}" \
+  --region "${GOOGLE_CLOUD_LOCATION}" \
+  --format='value(metadata.name)'
+```
+
+Delete all but the newest five revisions:
+
+```bash
+for rev in $(gcloud run revisions list \
+  --service lens-mosaic \
+  --project "${GOOGLE_CLOUD_PROJECT}" \
+  --region "${GOOGLE_CLOUD_LOCATION}" \
+  --format='value(metadata.name)' | tail -n +6); do
+  gcloud run revisions delete "$rev" \
+    --project "${GOOGLE_CLOUD_PROJECT}" \
+    --region "${GOOGLE_CLOUD_LOCATION}" \
+    --quiet
+done
+```
+
 If you are deploying in Gemini API mode, include whichever API key variable you use
 in the service env:
 
