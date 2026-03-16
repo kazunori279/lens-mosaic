@@ -13,9 +13,10 @@ import logging
 import os
 import queue
 import threading
+from collections import deque
 from dataclasses import dataclass, field
 from pathlib import Path
-from time import perf_counter, sleep
+from time import monotonic, perf_counter, sleep
 
 import vertexai
 from dotenv import load_dotenv
@@ -52,6 +53,7 @@ DEFAULT_IMAGE_MIME_TYPE = "image/jpeg"
 RRF_K = 60.0
 EMBEDDING_MAX_RETRIES = 3
 EMBEDDING_RETRY_BASE_DELAY_SECONDS = 0.5
+EMBEDDING_MAX_RPM_ENV = "LENS_MOSAIC_GEMINI_EMBEDDING_MAX_RPM"
 SIMILAR_SEARCH_WORKER_ENV = "LENS_MOSAIC_SIMILAR_SEARCH_WORKERS"
 
 
@@ -110,13 +112,57 @@ AGENT_MODEL = (
 )
 LIVE_API_KEY_PRESENT = bool(os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY"))
 TEST_ENDPOINTS_ENABLED = _env_flag("LENS_MOSAIC_ENABLE_TEST_ENDPOINTS")
-SIMILAR_SEARCH_WORKER_COUNT = max(1, _env_int(SIMILAR_SEARCH_WORKER_ENV, default=4))
+EMBEDDING_MAX_REQUESTS_PER_MINUTE = _env_int(EMBEDDING_MAX_RPM_ENV, default=1500)
+SIMILAR_SEARCH_WORKER_COUNT = max(1, _env_int(SIMILAR_SEARCH_WORKER_ENV, default=10))
 
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
 )
 logger = logging.getLogger(__name__)
+
+
+class EmbeddingRateLimitExceeded(RuntimeError):
+    """Raised when the app-side Gemini embedding RPM budget has been exhausted."""
+
+
+@dataclass
+class RollingWindowRateLimiter:
+    max_requests: int
+    window_seconds: float = 60.0
+    timestamps: deque[float] = field(default_factory=deque, repr=False)
+    lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
+
+    def reserve(self) -> tuple[bool, int]:
+        if self.max_requests <= 0:
+            return True, 0
+
+        now = monotonic()
+        cutoff = now - self.window_seconds
+        with self.lock:
+            while self.timestamps and self.timestamps[0] <= cutoff:
+                self.timestamps.popleft()
+            current = len(self.timestamps)
+            if current >= self.max_requests:
+                return False, current
+            self.timestamps.append(now)
+            return True, current + 1
+
+    def current_count(self) -> int:
+        if self.max_requests <= 0:
+            return 0
+
+        now = monotonic()
+        cutoff = now - self.window_seconds
+        with self.lock:
+            while self.timestamps and self.timestamps[0] <= cutoff:
+                self.timestamps.popleft()
+            return len(self.timestamps)
+
+
+EMBEDDING_RATE_LIMITER = RollingWindowRateLimiter(
+    max_requests=EMBEDDING_MAX_REQUESTS_PER_MINUTE
+)
 
 vertexai.init(project=PROJECT_ID, location=LOCATION)
 embedding_client = genai.Client(
@@ -216,6 +262,13 @@ def _embed_with_gemini_embedding_2(
         output_dimensionality=ACTIVE_COLLECTION.output_dimensionality
     )
     for attempt in range(EMBEDDING_MAX_RETRIES + 1):
+        allowed, current_rpm = EMBEDDING_RATE_LIMITER.reserve()
+        if not allowed:
+            raise EmbeddingRateLimitExceeded(
+                "Gemini embedding RPM budget exceeded: "
+                f"{current_rpm}/{EMBEDDING_MAX_REQUESTS_PER_MINUTE} requests "
+                "in the last 60 seconds"
+            )
         try:
             response = embedding_client.models.embed_content(
                 model=ACTIVE_COLLECTION.embedding_model,
@@ -611,6 +664,17 @@ async def _publish_similar_results(
     )
 
 
+async def _publish_recommended_results(session: SessionState) -> None:
+    await session.send(
+        {
+            "kind": "recommended",
+            "sessionId": session.session_id,
+            "userId": session.user_id,
+            "items": session.recommended,
+        }
+    )
+
+
 def _search_worker_loop(worker_id: int) -> None:
     while True:
         session_id = SEARCH_REQUEST_QUEUE.get()
@@ -629,6 +693,20 @@ def _search_worker_loop(worker_id: int) -> None:
         image, processed_version = search_input
         try:
             results = _collection_search(image=image)
+        except EmbeddingRateLimitExceeded as exc:
+            results = list(session.similar)
+            logger.warning(
+                "Similar search worker %d reused %d cached items for %s because %s",
+                worker_id,
+                len(results),
+                session_id,
+                exc,
+            )
+            if MAIN_LOOP is not None:
+                asyncio.run_coroutine_threadsafe(
+                    _publish_similar_results(session_id, processed_version, results),
+                    MAIN_LOOP,
+                )
         except Exception as exc:
             logger.error(
                 "Similar search worker %d error for %s: %s",
@@ -691,23 +769,27 @@ def _run_find_items_for_session(
 ) -> tuple[list[dict], float]:
     session = session_state_for(session_id, user_id)
     started_at = perf_counter()
-    session.recommended = search_text_queries_sync(queries, ranking_query)
+    reused_cached_results = False
+    try:
+        session.recommended = search_text_queries_sync(queries, ranking_query)
+    except EmbeddingRateLimitExceeded as exc:
+        reused_cached_results = True
+        logger.warning(
+            "find_items session_id=%s user_id=%s reused %d cached items because %s",
+            session_id,
+            user_id,
+            len(session.recommended),
+            exc,
+        )
     latency_ms = (perf_counter() - started_at) * 1000
     if publish and MAIN_LOOP:
         asyncio.run_coroutine_threadsafe(
-            session.send(
-                {
-                    "kind": "recommended",
-                    "sessionId": session.session_id,
-                    "userId": session.user_id,
-                    "items": session.recommended,
-                }
-            ),
+            _publish_recommended_results(session),
             MAIN_LOOP,
         )
     logger.info(
         "find_items session_id=%s user_id=%s ranking_query=%r queries=%s "
-        "items=%d latency_ms=%.1f publish=%s",
+        "items=%d latency_ms=%.1f publish=%s reused_cached=%s",
         session_id,
         user_id,
         ranking_query,
@@ -715,6 +797,7 @@ def _run_find_items_for_session(
         len(session.recommended),
         latency_ms,
         publish,
+        reused_cached_results,
     )
     return session.recommended, latency_ms
 
@@ -817,6 +900,7 @@ async def startup() -> None:
     logger.info("Search collection: %s", ACTIVE_COLLECTION.collection_id)
     logger.info("Search dataset: %s", ACTIVE_COLLECTION.dataset_id)
     logger.info("Search embedding model: %s", ACTIVE_COLLECTION.embedding_model)
+    logger.info("Embedding max RPM: %d", EMBEDDING_MAX_REQUESTS_PER_MINUTE)
     logger.info("Similar search workers: %d", SIMILAR_SEARCH_WORKER_COUNT)
     logger.info("Live backend provider: %s", LIVE_PROVIDER)
     logger.info("Live backend model: %s", AGENT_MODEL)
@@ -854,7 +938,10 @@ def search_endpoint(req: SearchRequest):
             status_code=400, detail="ranking_query must be a non-empty string"
         )
     logger.info("Search request: ranking_query=%r, queries=%s", ranking_query, queries)
-    return search_text_queries_sync(queries, ranking_query)
+    try:
+        return search_text_queries_sync(queries, ranking_query)
+    except EmbeddingRateLimitExceeded as exc:
+        raise HTTPException(status_code=429, detail=str(exc)) from exc
 
 
 @app.post("/rank", response_model=list[SearchResult])
@@ -891,6 +978,8 @@ def health():
         "live_provider": LIVE_PROVIDER,
         "google_genai_use_vertexai": LIVE_USE_VERTEXAI,
         "agent_model": AGENT_MODEL,
+        "embedding_max_rpm": EMBEDDING_MAX_REQUESTS_PER_MINUTE,
+        "embedding_requests_last_minute": EMBEDDING_RATE_LIMITER.current_count(),
         "test_endpoints_enabled": TEST_ENDPOINTS_ENABLED,
     }
 

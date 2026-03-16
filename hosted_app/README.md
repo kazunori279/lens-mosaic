@@ -52,7 +52,12 @@ The hosted app now supports only the Gemini Embedding collection and derives the
 vector fields from that collection ID.
 
 Set `LENS_MOSAIC_SIMILAR_SEARCH_WORKERS` to control the number of background
-workers used for camera-driven similar search. The default is `4`.
+workers used for camera-driven similar search. The default is `10`.
+
+Set `LENS_MOSAIC_GEMINI_EMBEDDING_MAX_RPM` to cap the total number of Gemini
+Embedding 2 requests the app will issue in a rolling 60-second window. The
+default is `1500`. When the app is over that budget, session-backed UI requests
+reuse the last published results instead of sending a new embedding request.
 
 If you run these commands in Codex or another sandboxed environment, set:
 
@@ -258,12 +263,13 @@ gcloud run deploy lens-mosaic \
   --project "${GOOGLE_CLOUD_PROJECT}" \
   --region "${GOOGLE_CLOUD_LOCATION}" \
   --allow-unauthenticated \
+  --concurrency 500 \
   --cpu 2 \
   --memory 2Gi \
   --timeout 3600 \
   --min-instances 1 \
   --max-instances 1 \
-  --set-env-vars GOOGLE_GENAI_USE_VERTEXAI="${GOOGLE_GENAI_USE_VERTEXAI}",GOOGLE_CLOUD_PROJECT="${GOOGLE_CLOUD_PROJECT}",GOOGLE_CLOUD_LOCATION="${GOOGLE_CLOUD_LOCATION}",LENS_MOSAIC_COLLECTION_ID="${LENS_MOSAIC_COLLECTION_ID}"
+  --set-env-vars GOOGLE_GENAI_USE_VERTEXAI="${GOOGLE_GENAI_USE_VERTEXAI}",GOOGLE_CLOUD_PROJECT="${GOOGLE_CLOUD_PROJECT}",GOOGLE_CLOUD_LOCATION="${GOOGLE_CLOUD_LOCATION}",LENS_MOSAIC_COLLECTION_ID="${LENS_MOSAIC_COLLECTION_ID}",LENS_MOSAIC_GEMINI_EMBEDDING_MAX_RPM="${LENS_MOSAIC_GEMINI_EMBEDDING_MAX_RPM}"
 ```
 
 If you are deploying in Gemini API mode, include whichever API key variable you use
@@ -275,12 +281,13 @@ gcloud run deploy lens-mosaic \
   --project "${GOOGLE_CLOUD_PROJECT}" \
   --region "${GOOGLE_CLOUD_LOCATION}" \
   --allow-unauthenticated \
+  --concurrency 500 \
   --cpu 2 \
   --memory 2Gi \
   --timeout 3600 \
   --min-instances 1 \
   --max-instances 1 \
-  --set-env-vars GOOGLE_GENAI_USE_VERTEXAI="${GOOGLE_GENAI_USE_VERTEXAI}",GOOGLE_API_KEY="${GOOGLE_API_KEY}",GOOGLE_CLOUD_PROJECT="${GOOGLE_CLOUD_PROJECT}",GOOGLE_CLOUD_LOCATION="${GOOGLE_CLOUD_LOCATION}",LENS_MOSAIC_COLLECTION_ID="${LENS_MOSAIC_COLLECTION_ID}"
+  --set-env-vars GOOGLE_GENAI_USE_VERTEXAI="${GOOGLE_GENAI_USE_VERTEXAI}",GOOGLE_API_KEY="${GOOGLE_API_KEY}",GOOGLE_CLOUD_PROJECT="${GOOGLE_CLOUD_PROJECT}",GOOGLE_CLOUD_LOCATION="${GOOGLE_CLOUD_LOCATION}",LENS_MOSAIC_COLLECTION_ID="${LENS_MOSAIC_COLLECTION_ID}",LENS_MOSAIC_GEMINI_EMBEDDING_MAX_RPM="${LENS_MOSAIC_GEMINI_EMBEDDING_MAX_RPM}"
 ```
 
 Older env files may still use `GEMINI_API_KEY`, but `GOOGLE_API_KEY` is the primary
@@ -289,10 +296,65 @@ variable going forward.
 Recommended runtime settings:
 
 - use `2 vCPU` with `2 GiB` memory for the hosted deployment
+- use `concurrency=500` so one warm instance can hold many websocket sessions
 - keep `min-instances=1` so the demo stays warm
-- keep `max-instances=1` for now because live session state is in memory
+- keep `max-instances=1` for now because live session state and tile routing are
+  still in memory
 - use a service account with access to Vertex AI, Vector Search 2.0, and Discovery
   Engine Ranking
+
+## Load Testing Notes
+
+These results are from local load tests against the hosted app test endpoints in
+this repository, not Cloud Run service metrics. They are still useful for sizing
+the app and understanding where the current bottlenecks are.
+
+### Similar search
+
+- The original single-worker similar-search loop did not scale well. At `20`
+  concurrent users it timed out heavily.
+- Moving similar search to a worker pool was the biggest architectural win in
+  this session.
+- With `4` similar-search workers, `20` users completed cleanly with
+  `p50=5.21s`, `p95=10.36s`, `0` timeouts, `0` session mismatches.
+- With `10` similar-search workers, `50` users completed cleanly with
+  `p50=5.03s`, `p95=9.47s`, `0` timeouts, `0` session mismatches.
+- With `100` similar-search workers and no app-side embedding cap, `200` users
+  over `30s` completed `892` updates but saw `162` timeouts and upstream
+  `429 RESOURCE_EXHAUSTED` errors from Gemini Embedding 2.
+- With `100` similar-search workers and
+  `LENS_MOSAIC_GEMINI_EMBEDDING_MAX_RPM=1500`, the same `200`-user / `30s` test
+  completed `1130` updates with `p50=2.13s`, `p95=5.92s`, `0` timeouts, and
+  `0` session mismatches.
+
+### find_items
+
+- `find_items` was consistently more stable than the camera-driven similar-search
+  path in local testing.
+- At `20` concurrent users, `find_items` completed cleanly with `p50=2.26s`,
+  `p95=3.04s`, `0` timeouts, and `0` session mismatches.
+
+### Session consistency
+
+- In all successful unique-session runs, the tests observed `0` session
+  mismatches and `0` unexpected updates.
+- The current service still stores session state in memory, so this consistency
+  result assumes a single app instance. That is the reason the Cloud Run
+  recommendation above keeps `max-instances=1` for now.
+
+### Learnings
+
+- The main scalability problem was the similar-search execution model, not
+  `find_items`.
+- CPU and memory were not the first limiting factors in local testing. Embedding
+  throughput and quota pressure were more important.
+- A request-per-minute cap on Gemini Embedding 2 is necessary to avoid upstream
+  quota spikes under high camera concurrency.
+- The current app-side cap is request-count based, while the upstream Vertex AI
+  quota is token based. Treat `1500 RPM` as an empirically safer operating point,
+  not a guaranteed universal quota match.
+- Horizontal scaling is still unsafe for live sessions until session state and
+  websocket fan-out move out of process.
 
 ### 2. Make the service public if needed
 
