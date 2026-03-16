@@ -74,7 +74,6 @@ Supported dataset:
 
 - **Collection**: `mercari3m-collection-mm2`
 - **ANN Indexes**: `text-emb-index` (text), `image-emb-index` (image)
-- **Dataset ID**: `mercari3m_mm2`
 - **Embedding Model**: `gemini-embedding-2-preview` (BYOE - Bring Your Own Embeddings)
 - **Embedding Dimensions**: `768` (reduced from `3072` default)
 - **Vector Fields**: `text_emb` (from `{name} {description}`), `image_emb` (from product image)

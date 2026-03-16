@@ -60,7 +60,6 @@ SIMILAR_SEARCH_WORKER_ENV = "LENS_MOSAIC_SIMILAR_SEARCH_WORKERS"
 @dataclass(frozen=True)
 class CollectionConfig:
     collection_id: str
-    dataset_id: str
     embedding_model: str
     text_vector_field: str
     image_vector_field: str
@@ -70,7 +69,6 @@ class CollectionConfig:
 SUPPORTED_COLLECTIONS: dict[str, CollectionConfig] = {
     "mercari3m-collection-mm2": CollectionConfig(
         collection_id="mercari3m-collection-mm2",
-        dataset_id="mercari3m_mm2",
         embedding_model="gemini-embedding-2-preview",
         text_vector_field="text_emb",
         image_vector_field="image_emb",
@@ -898,7 +896,6 @@ async def startup() -> None:
     MAIN_LOOP = asyncio.get_running_loop()
     _ensure_search_workers()
     logger.info("Search collection: %s", ACTIVE_COLLECTION.collection_id)
-    logger.info("Search dataset: %s", ACTIVE_COLLECTION.dataset_id)
     logger.info("Search embedding model: %s", ACTIVE_COLLECTION.embedding_model)
     logger.info("Embedding max RPM: %d", EMBEDDING_MAX_REQUESTS_PER_MINUTE)
     logger.info("Similar search workers: %d", SIMILAR_SEARCH_WORKER_COUNT)
@@ -972,7 +969,6 @@ def health():
         "status": "ok",
         "project_id": PROJECT_ID,
         "collection_id": COLLECTION_ID,
-        "dataset_id": ACTIVE_COLLECTION.dataset_id,
         "embedding_model": ACTIVE_COLLECTION.embedding_model,
         "live_enabled": True,
         "live_provider": LIVE_PROVIDER,
