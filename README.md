@@ -4,6 +4,7 @@ LensMosaic is a **live multimodal shopping demo** that combines **camera
 input**, **voice interaction**, and **product retrieval** in a single web app.
 
 ![LensMosaic demo](assets/lens-mosaic-demo.png)
+[Demo Video](https://youtu.be/SgMn-6q8Qg8)
 
 ## Try It
 
