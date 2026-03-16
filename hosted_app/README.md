@@ -76,8 +76,12 @@ Before starting `uvicorn` or Cloud Run, verify that the live model itself is
 responding from this machine:
 
 ```bash
-uv run --project hosted_app python hosted_app/model_test.py --timeout 60
+uv run --project hosted_app python hosted_app/test/model_test.py --timeout 60
 ```
+
+If you want to run the audio probe in `hosted_app/test/model_test.py`, macOS is
+currently the easiest path because the script uses `say` and `afconvert` to
+generate test audio locally.
 
 This probe runs:
 

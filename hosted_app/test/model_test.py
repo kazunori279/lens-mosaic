@@ -16,7 +16,7 @@ from google import genai
 from google.genai import types
 
 
-APP_DIR = Path(__file__).resolve().parent / "app"
+APP_DIR = Path(__file__).resolve().parent.parent / "app"
 ENV_PATH = APP_DIR / ".env"
 DEFAULT_VERTEX_MODEL = "gemini-live-2.5-flash-native-audio"
 DEFAULT_GEMINI_MODEL = "gemini-2.5-flash-native-audio-preview-12-2025"
