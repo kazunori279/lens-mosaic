@@ -1,29 +1,41 @@
-# Hosted App Load Test Plan
+# Hosted App Load Testing
+
+This directory contains the hosted app load-test driver, result artifacts, and
+test-planning notes.
+
+Files:
+
+- `load_test.py`: local load-test driver for the hosted app test endpoints
+- `results/`: local run outputs
+
+## Summary
+
+These results are from local load tests against the hosted app test endpoints in
+this repository, not Cloud Run service metrics. They are still useful for sizing
+the app and understanding where the current bottlenecks are.
 
 ## Goal
 
 Measure how the hosted app behaves under concurrent usage and verify that session
 state does not get mixed across users.
 
-This plan focuses on:
+This testing work focuses on:
 
 - CPU and memory usage of the hosted app
-- response latency for the similar search loop
+- response latency for the similar-search loop
 - response latency for `find_items`
-- behavior at 10 concurrent users
-- behavior at 20 concurrent users
+- behavior at rising concurrency levels
 - consistency of responses across different sessions
 
 ## Current Architecture Notes
 
-These details affect how the test should be designed:
+These details affect how the tests should be interpreted:
 
-- Similar-item search is driven by camera image messages over the live WebSocket.
-- Similar-item results are published back to the client through the tile WebSocket.
-- Similar search uses a single process-wide queue and a single background worker
-  thread.
-- `find_items` runs synchronously in-process and publishes recommended items back
-  to the session tile socket.
+- Similar-item search is driven by camera image messages and published back
+  through the tile websocket.
+- Similar search now uses a process-wide queue with a configurable worker pool.
+- `find_items` runs synchronously in-process and publishes recommended items
+  back to the session tile socket.
 - Session state is stored in-process and keyed by `session_id`.
 
 Relevant code:
@@ -33,52 +45,87 @@ Relevant code:
 
 ## Test Objectives
 
-1. Measure end-to-end latency for the similar search loop at 10 and 20 concurrent users.
-2. Measure end-to-end latency for `find_items` at 10 and 20 concurrent users.
+1. Measure end-to-end latency for the similar-search loop under concurrency.
+2. Measure end-to-end latency for `find_items` under concurrency.
 3. Measure server CPU and memory usage during each run.
 4. Detect request failures, timeouts, disconnects, and degraded throughput.
-5. Verify that one session never receives another session's similar or recommended
-   results.
+5. Verify that one session never receives another session's similar or
+   recommended results.
+
+## Similar Search
+
+- The original single-worker similar-search loop did not scale well. At `20`
+  concurrent users it timed out heavily.
+- Moving similar search to a worker pool was the biggest architectural win in
+  this session.
+- With `4` similar-search workers, `20` users completed cleanly with
+  `p50=5.21s`, `p95=10.36s`, `0` timeouts, `0` session mismatches`.
+- With `10` similar-search workers, `50` users completed cleanly with
+  `p50=5.03s`, `p95=9.47s`, `0` timeouts, `0` session mismatches`.
+- With `100` similar-search workers and no app-side embedding cap, `200` users
+  over `30s` completed `892` updates but saw `162` timeouts and upstream
+  `429 RESOURCE_EXHAUSTED` errors from Gemini Embedding 2.
+- With `100` similar-search workers and
+  `LENS_MOSAIC_GEMINI_EMBEDDING_MAX_RPM=1500`, the same `200`-user / `30s` test
+  completed `1130` updates with `p50=2.13s`, `p95=5.92s`, `0` timeouts, and
+  `0` session mismatches.
+
+Reference results:
+
+- [`similar-20-post-pool.json`](/Users/kaz/Documents/GitHub/lens-mosaic/hosted_app/test/results/similar-20-post-pool.json)
+- [`similar-50-10-workers.json`](/Users/kaz/Documents/GitHub/lens-mosaic/hosted_app/test/results/similar-50-10-workers.json)
+- [`similar-200-100-workers-30s.json`](/Users/kaz/Documents/GitHub/lens-mosaic/hosted_app/test/results/similar-200-100-workers-30s.json)
+- [`similar-200-100-workers-rpm-guard-1500.json`](/Users/kaz/Documents/GitHub/lens-mosaic/hosted_app/test/results/similar-200-100-workers-rpm-guard-1500.json)
+
+## find_items
+
+- `find_items` was consistently more stable than the camera-driven similar-search
+  path in local testing.
+- At `20` concurrent users, `find_items` completed cleanly with `p50=2.26s`,
+  `p95=3.04s`, `0` timeouts, and `0` session mismatches.
+
+Reference result:
+
+- [`find-items-20.json`](/Users/kaz/Documents/GitHub/lens-mosaic/hosted_app/test/results/find-items-20.json)
+
+## Session Consistency
+
+- In all successful unique-session runs, the tests observed `0` session
+  mismatches and `0` unexpected updates.
+- The current service still stores session state in memory, so this consistency
+  result assumes a single app instance.
 
 ## Workloads
 
-### Workload A: Similar Search Loop
+### Similar Search
 
-Each virtual user should:
+Each virtual user:
 
-1. Open a live WebSocket connection to `/ws/{user_id}/{session_id}`.
-2. Open a tile WebSocket connection to `/ws_image_tile/{session_id}`.
-3. Send image messages in the same shape as the browser UI.
-4. Set `forwardToAgent=false` so the test isolates similar search behavior rather
-   than live vision model behavior.
-5. Measure the time from image send to receipt of a `kind="similar"` tile update.
+1. Opens a tile websocket connection to `/ws_image_tile/{session_id}`.
+2. Sends image inputs that match the browser UI payload shape.
+3. Uses `forwardToAgent=false` or the `/test/similar` harness so the test
+   isolates similar-search behavior rather than live-agent variability.
+4. Measures the time from image submit to receipt of a `kind="similar"` tile
+   update.
 
 Notes:
 
-- The current worker model is latest-frame-wins, not process-every-frame.
+- The worker model is latest-frame-wins, not process-every-frame.
 - Under load, some intermediate frames may be skipped by design.
-- The primary success condition is timely delivery of the latest relevant result
-  per user, not strict one-result-per-frame behavior.
+- The main success condition is timely delivery of the latest relevant result per
+  user, not strict one-result-per-frame behavior.
 
-### Workload B: `find_items`
+### find_items
 
-`find_items` is not a public HTTP route. To test it consistently, use one of the
-following approaches:
+`find_items` is tested through the guarded harness path rather than through
+free-form voice prompting, so latency stays comparable across runs.
 
-1. Preferred: add a test-only harness that directly invokes the same server-side
-   code path as `find_items`.
-2. Acceptable fallback: add a guarded internal test endpoint that calls the same
-   function with fixed query sets.
+Each virtual user:
 
-Do not rely on free-form voice prompting for the benchmark because that adds model
-variability and makes latency comparisons noisy.
-
-For each virtual user:
-
-1. Use a unique `user_id` and `session_id`.
-2. Trigger `find_items` with a fixed set of queries and a fixed `ranking_query`.
-3. Measure the time from request start to recommended-items delivery and function
-   completion.
+1. Uses a unique `user_id` and `session_id`.
+2. Triggers `find_items` with a fixed query bundle and `ranking_query`.
+3. Measures the time from request start to recommended-items delivery and
+   function completion.
 
 ## Metrics To Collect
 
@@ -93,9 +140,6 @@ Collect for the hosted app process or Cloud Run service:
 - instance count
 - request rate
 - error rate
-
-If the app is running on Cloud Run, collect these from Cloud Monitoring for the
-same wall-clock window as each load test.
 
 ### Latency Metrics
 
@@ -147,7 +191,7 @@ Record:
 
 Use fixed and repeatable inputs.
 
-### Similar Search Test Inputs
+### Similar Search Inputs
 
 Prepare a small image set with distinct subjects, for example:
 
@@ -160,7 +204,7 @@ Prepare a small image set with distinct subjects, for example:
 Assign one image profile per virtual user so results should be visually and
 semantically different across sessions.
 
-### `find_items` Test Inputs
+### find_items Inputs
 
 Prepare fixed query bundles such as:
 
@@ -173,48 +217,7 @@ Prepare fixed query bundles such as:
 
 Each user should be assigned one stable bundle during a run.
 
-## Concurrency Matrix
-
-Run each workload separately first.
-
-### Baseline
-
-- 1 concurrent user for similar search
-- 1 concurrent user for `find_items`
-
-### Target Runs
-
-- 10 concurrent users for similar search
-- 20 concurrent users for similar search
-- 10 concurrent users for `find_items`
-- 20 concurrent users for `find_items`
-
-### Optional Mixed Runs
-
-After the isolated runs are stable, add:
-
-- 10 concurrent users total, split evenly across the two workloads
-- 20 concurrent users total, split evenly across the two workloads
-
-## Traffic Shape
-
-To keep runs comparable:
-
-- ramp up over 60 to 120 seconds
-- hold steady for 10 minutes
-- cool down for 60 seconds
-
-Suggested per-user pacing:
-
-- Similar search: send one image every 2 to 3 seconds
-- `find_items`: trigger one search every 3 to 5 seconds
-
-Avoid burst-only tests at first. A steady-state test is more useful for capacity
-planning and session-consistency checks.
-
 ## Session Consistency Checks
-
-This is a required part of the plan.
 
 ### Positive Isolation Checks
 
@@ -259,6 +262,27 @@ Purpose:
 - document current behavior clearly
 
 Do not mix this negative test into the main performance runs.
+
+## Learnings
+
+- The main scalability problem was the similar-search execution model, not
+  `find_items`.
+- CPU and memory were not the first limiting factors in local testing. Embedding
+  throughput and quota pressure were more important.
+- A request-per-minute cap on Gemini Embedding 2 is necessary to avoid upstream
+  quota spikes under high camera concurrency.
+- The current app-side cap is request-count based, while the upstream Vertex AI
+  quota is token based. Treat `1500 RPM` as an empirically safer operating
+  point, not a guaranteed universal quota match.
+- Horizontal scaling is still unsafe for live sessions until session state and
+  websocket fan-out move out of process.
+
+## Cloud Run Implications
+
+- Prefer `concurrency=500` on a single warm instance over horizontal scaling
+  right now.
+- Keep `max-instances=1` until session state and websocket fan-out move out of
+  process.
 
 ## Instrumentation Requirements
 
@@ -340,6 +364,6 @@ To execute this plan reliably, the next engineering tasks should be:
 
 1. Add structured timing and session-aware logs.
 2. Add a test harness for `find_items`.
-3. Build a load generator for the live WebSocket and tile WebSocket flows.
+3. Build a load generator for the live websocket and tile websocket flows.
 4. Add result-validation logic that flags cross-session leakage.
 5. Run baseline tests before scaling to 10 and 20 users.
