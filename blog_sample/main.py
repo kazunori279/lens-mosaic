@@ -1,4 +1,4 @@
-"""Minimal LensMosaic live server for blog readers."""
+"""Minimal LensMosaic live server."""
 
 from __future__ import annotations
 
@@ -19,8 +19,6 @@ from google.genai import types
 
 import vertexai
 
-# `blog_sample` uses a Vertex AI live model, so make that provider explicit for
-# the underlying google-genai client that ADK creates.
 os.environ.setdefault("GOOGLE_GENAI_USE_VERTEXAI", "TRUE")
 
 # App configuration and external service setup.
@@ -31,7 +29,6 @@ GOOGLE_CLOUD_PROJECT = os.environ["GOOGLE_CLOUD_PROJECT"]
 GOOGLE_CLOUD_LOCATION = os.environ["GOOGLE_CLOUD_LOCATION"]
 LENS_MOSAIC_COLLECTION_ID = "mercari3m-collection-mm2"
 HOSTED_URL = "https://lens-mosaic-nhhfh7g7iq-uc.a.run.app"
-# The blog sample reuses the deployed hosted app for UI and catalog APIs.
 
 vertexai.init(
     project=GOOGLE_CLOUD_PROJECT,
@@ -214,7 +211,6 @@ async def client_to_agent(ws: WebSocket, queue: LiveRequestQueue) -> None:
     while True:
         message = await ws.receive()
         if message.get("bytes") is not None:
-            # Raw websocket bytes are microphone audio chunks from the browser.
             queue.send_realtime(
                 types.Blob(mime_type="audio/pcm;rate=16000", data=message["bytes"])
             )
@@ -228,7 +224,6 @@ async def client_to_agent(ws: WebSocket, queue: LiveRequestQueue) -> None:
         if payload.get("type") != "image":
             continue
         if payload.get("forwardToAgent", True):
-            # Camera frames are base64 encoded on the client before they reach us.
             queue.send_realtime(
                 types.Blob(
                     mime_type=payload.get("mimeType", "image/jpeg"),
