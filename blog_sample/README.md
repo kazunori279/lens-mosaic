@@ -60,7 +60,7 @@ http://127.0.0.1:8080/
 These values are currently hardcoded in `blog_sample/main.py`:
 
 - `LENS_MOSAIC_COLLECTION_ID=mercari3m-collection-mm2`
-- `LENS_MOSAIC_HOSTED_URL=https://lens-mosaic-nhhfh7g7iq-uc.a.run.app`
+- `HOSTED_URL=https://lens-mosaic-nhhfh7g7iq-uc.a.run.app`
 
 The proxied `/search` endpoint now expects:
 
