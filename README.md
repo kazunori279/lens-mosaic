@@ -16,8 +16,6 @@ input**, **voice interaction**, and **product retrieval** in a single web app.
 - **Similar-item search and recommendations** powered by [**Gemini Embedding 2**](https://docs.cloud.google.com/vertex-ai/generative-ai/docs/embeddings/get-text-embeddings), [**Vector Search 2.0**](https://cloud.google.com/vertex-ai/docs/vector-search-2/overview), and [**Vertex AI Ranking API**](https://docs.cloud.google.com/generative-ai-app-builder/docs/ranking).
 - **Local development and hosted deployment** using the same app architecture on [**Cloud Run**](https://cloud.google.com/run/docs).
 
-![Item details](assets/lm-item-detail.png)
-
 ## Architecture and Tech Stack
 
 LensMosaic is built as a **single-origin web app** in `hosted_app`. The same
