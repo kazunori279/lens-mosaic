@@ -780,7 +780,6 @@ const popupImage = document.getElementById("popup-image");
 const popupName = document.getElementById("popup-name");
 const popupPrice = document.getElementById("popup-price");
 const popupDescription = document.getElementById("popup-description");
-const popupUrl = document.getElementById("popup-url");
 
 document.getElementById("popup-close").addEventListener("click", closePopup);
 document.getElementById("popup-backdrop").addEventListener("click", closePopup);
@@ -802,12 +801,6 @@ async function showItemPopup(itemId) {
     popupPrice.textContent = item.price ? `$${Number(item.price).toLocaleString()}` : "";
     popupPrice.style.display = item.price ? "block" : "none";
     popupDescription.textContent = item.description || "";
-    if (item.url) {
-      popupUrl.href = item.url;
-      popupUrl.style.display = "inline-block";
-    } else {
-      popupUrl.style.display = "none";
-    }
     const img = new Image();
     img.onload = () => {
       popupImage.src = img.src;

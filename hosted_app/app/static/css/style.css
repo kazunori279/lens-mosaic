@@ -525,17 +525,6 @@ footer a:hover {
   line-height: 1.5;
 }
 
-#popup-url {
-  display: inline-block;
-  font-size: 13px;
-  color: #aaa;
-  text-decoration: underline;
-}
-
-#popup-url:hover {
-  color: #fff;
-}
-
 main:has(#video-container.active) {
   display: grid;
   grid-template-columns: minmax(0, 1fr) clamp(190px, 31vw, 320px);

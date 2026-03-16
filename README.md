@@ -5,16 +5,18 @@ input**, **voice interaction**, and **product retrieval** in a single web app.
 
 ![LensMosaic demo](assets/lens-mosaic-demo.png)
 
+### User Journeys
+
+- **Use the camera as a real-time "shopping lens":** the user points the camera at any item, and the app instantly surfaces visually and semantically similar products from millions of catalog items, like a magnifying lens for a large shopping catalog.
+- **Get recommendations from visual context and a spoken request:** the user asks the agent for something that matches what they are looking at or describes a need such as a gift or complementary product, and the agent researches likely matches, turns them into product-search queries, and shows the recommended products.
+
 ## What the App Provides
 
 - **Live text, voice, and camera interaction** with an AI shopping assistant built with [**Google ADK**](https://google.github.io/adk-docs/) and the [**ADK Gemini Live API Toolkit**](https://google.github.io/adk-docs/streaming/).
 - **Similar-item search and recommendations** powered by [**Gemini Embedding 2**](https://docs.cloud.google.com/vertex-ai/generative-ai/docs/embeddings/get-text-embeddings), [**Vector Search 2.0**](https://cloud.google.com/vertex-ai/docs/vector-search-2/overview), and [**Vertex AI Ranking API**](https://docs.cloud.google.com/generative-ai-app-builder/docs/ranking).
 - **Local development and hosted deployment** using the same app architecture on [**Cloud Run**](https://cloud.google.com/run/docs).
 
-### User Journeys
-
-- **Use the camera as a real-time shopping lens:** the user points the camera at an item, asks for something similar, and the agent immediately searches without asking a follow-up question, publishes matching products to the UI, and reads back a few product names in the user’s language.
-- **Get recommendations from visual context or a spoken request:** the user asks for something that matches what they are looking at or describes a need such as a gift or complementary product, and the agent researches likely matches, turns them into product-search queries, and shows the recommended products on screen.
+![Item details](assets/lm-item-detail.png)
 
 ## Architecture and Tech Stack
 
