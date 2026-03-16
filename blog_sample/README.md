@@ -19,21 +19,23 @@ Current differences from `hosted_app`:
 
 ## Files
 
-- `app/main.py`: minimal sample server
+- `main.py`: minimal sample server
 
 ## Run locally
 
-From the repository root:
-
+From inside `blog_sample`:
 ```bash
-export GOOGLE_CLOUD_PROJECT=gcp-samples-ic0
+cd blog_sample
+gcloud auth application-default login
+gcloud services enable vectorsearch.googleapis.com aiplatform.googleapis.com
+export GOOGLE_CLOUD_PROJECT=YOUR_PROJECT_ID
 export GOOGLE_CLOUD_LOCATION=us-central1
 uv run \
   --with google-adk \
   --with google-genai \
   --with google-cloud-aiplatform \
   --with certifi \
-  uvicorn blog_sample.app.main:app --host 127.0.0.1 --port 8080
+  uvicorn main:app --host 127.0.0.1 --port 8080
 ```
 
 This uses a blog-sample-specific runtime instead of reusing the `hosted_app`
@@ -52,7 +54,7 @@ http://127.0.0.1:8080/
 - `GOOGLE_CLOUD_PROJECT`: Vertex AI project for local live testing
 - `GOOGLE_CLOUD_LOCATION`: Vertex AI region for the live model
 
-These values are currently hardcoded in `blog_sample/app/main.py`:
+These values are currently hardcoded in `blog_sample/main.py`:
 
 - `LENS_MOSAIC_COLLECTION_ID=mercari3m-collection-mm2`
 - `LENS_MOSAIC_HOSTED_URL=https://lens-mosaic-nhhfh7g7iq-uc.a.run.app`
