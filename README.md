@@ -5,6 +5,15 @@ input**, **voice interaction**, and **product retrieval** in a single web app.
 
 ![LensMosaic demo](assets/lens-mosaic-demo.png)
 
+## Try It
+
+Open the hosted app here:
+[https://lens-mosaic-nhhfh7g7iq-uc.a.run.app](https://lens-mosaic-nhhfh7g7iq-uc.a.run.app)
+
+Or scan this QR code on your phone:
+
+![LensMosaic mobile QR](assets/lens-mosaic-mobile-qr.png)
+
 ### User Journeys
 
 - **Use the camera as a real-time "shopping lens":** the user points the camera at any item, and the app instantly surfaces visually and semantically similar products from millions of catalog items, like a magnifying lens for a large shopping catalog.
