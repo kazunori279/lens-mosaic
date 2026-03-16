@@ -24,6 +24,7 @@ PCM_RATE = 16_000
 PCM_CHUNK_MS = 100
 PCM_BYTES_PER_MS = (PCM_RATE * 2) / 1000
 PCM_CHUNK_BYTES = int(PCM_CHUNK_MS * PCM_BYTES_PER_MS)
+TRAILING_SILENCE_MS = 1000
 
 
 @dataclass
@@ -133,7 +134,10 @@ def synthesize_pcm(text: str, voice: str) -> bytes:
                 "Unexpected WAV format after conversion: "
                 f"rate={sample_rate}, channels={channels}, sample_width={sample_width}"
             )
-        return frames
+        # Add a short silence tail so the live model can observe end-of-speech
+        # before we close the input stream.
+        silence = b"\x00" * int(TRAILING_SILENCE_MS * PCM_BYTES_PER_MS)
+        return frames + silence
 
 
 def merge_transcript(current: str, chunk: str) -> str:
