@@ -1,11 +1,6 @@
 # Hosted App
 
-`hosted_app` is the Cloud Run service for LensMosaic.
-
-If you want a much smaller local example for documentation or tutorials, see
-[`blog_sample/README.md`](../blog_sample/README.md).
-
-It serves:
+`hosted_app` is the Cloud Run service for LensMosaic. It serves:
 
 - static UI assets
 - public search endpoints
@@ -22,6 +17,10 @@ This README covers two deployment environments for the hosted app:
 
 - local testing on your machine or LAN
 - remote deployment to Cloud Run
+
+The hosted app is intended to work in browsers on PCs and smartphones.
+For live testing, smartphone use is recommended so you can move around more
+easily and point the camera at different items in your room.
 
 Use the local flow when you are debugging the UI, live session behavior, or phone
 permissions before touching Cloud Run. Use the remote flow when you want the hosted
@@ -52,21 +51,12 @@ The hosted app now supports only the Gemini Embedding collection and derives the
 vector fields from that collection ID.
 
 Set `LENS_MOSAIC_SIMILAR_SEARCH_WORKERS` to control the number of background
-workers used for camera-driven similar search. The default is `10`.
+workers used for camera-driven similar search. The default is `100`.
 
 Set `LENS_MOSAIC_GEMINI_EMBEDDING_MAX_RPM` to cap the total number of Gemini
 Embedding 2 requests the app will issue in a rolling 60-second window. The
 default is `1500`. When the app is over that budget, session-backed UI requests
 reuse the last published results instead of sending a new embedding request.
-
-If you run these commands in Codex or another sandboxed environment, set:
-
-```bash
-export UV_CACHE_DIR=/tmp/uv-cache
-```
-
-That prevents `uv` from failing when it cannot write to its default cache
-directory.
 
 Supported dataset:
 
@@ -288,9 +278,6 @@ gcloud run deploy lens-mosaic \
   --max-instances 1 \
   --set-env-vars GOOGLE_GENAI_USE_VERTEXAI="${GOOGLE_GENAI_USE_VERTEXAI}",GOOGLE_API_KEY="${GOOGLE_API_KEY}",GOOGLE_CLOUD_PROJECT="${GOOGLE_CLOUD_PROJECT}",GOOGLE_CLOUD_LOCATION="${GOOGLE_CLOUD_LOCATION}",LENS_MOSAIC_COLLECTION_ID="${LENS_MOSAIC_COLLECTION_ID}",LENS_MOSAIC_GEMINI_EMBEDDING_MAX_RPM="${LENS_MOSAIC_GEMINI_EMBEDDING_MAX_RPM}"
 ```
-
-Older env files may still use `GEMINI_API_KEY`, but `GOOGLE_API_KEY` is the primary
-variable going forward.
 
 Recommended runtime settings:
 
