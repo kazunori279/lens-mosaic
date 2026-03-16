@@ -23,11 +23,10 @@ Current differences from `hosted_app`:
 
 ## Run locally
 
-From inside `blog_sample`:
 ```bash
 cd blog_sample
 gcloud auth application-default login
-gcloud services enable vectorsearch.googleapis.com aiplatform.googleapis.com
+gcloud services enable aiplatform.googleapis.com
 export GOOGLE_CLOUD_PROJECT=YOUR_PROJECT_ID
 export GOOGLE_CLOUD_LOCATION=us-central1
 uv run \
