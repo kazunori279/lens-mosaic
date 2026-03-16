@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import asyncio, base64, json, os, ssl
+import asyncio, base64, json, logging, os, ssl
 import urllib.error, urllib.parse, urllib.request
 from dataclasses import dataclass, field
 
@@ -14,9 +14,14 @@ from google.adk.agents.run_config import RunConfig, StreamingMode
 from google.adk.runners import Runner
 from google.adk.sessions import InMemorySessionService
 from google.adk.tools import ToolContext
+from google.genai import errors as genai_errors
 from google.genai import types
 
 import vertexai
+
+# `blog_sample` uses a Vertex AI live model, so make that provider explicit for
+# the underlying google-genai client that ADK creates.
+os.environ.setdefault("GOOGLE_GENAI_USE_VERTEXAI", "TRUE")
 
 # App configuration and external service setup.
 APP_NAME = "lens-mosaic-blog-sample"
@@ -47,6 +52,16 @@ SESSION_STATES: dict[str, SessionState] = {}
 SESSION_SERVICE = InMemorySessionService()
 MAIN_LOOP: asyncio.AbstractEventLoop | None = None
 SSL_CONTEXT = ssl.create_default_context(cafile=certifi.where())
+
+
+def _ignore_normal_live_close(record: logging.LogRecord) -> bool:
+    exc = record.exc_info[1] if record.exc_info else None
+    return not (isinstance(exc, genai_errors.APIError) and exc.code == 1000)
+
+
+logging.getLogger(
+    "google_adk.google.adk.flows.llm_flows.base_llm_flow"
+).addFilter(_ignore_normal_live_close)
 
 
 # Session lifecycle helpers.
@@ -233,8 +248,12 @@ async def agent_to_client(user_id: str, session_id: str, ws: WebSocket, queue: L
         await ws.send_text(event.model_dump_json(exclude_none=True, by_alias=True))
 
 
-def is_disconnect_error(exc: RuntimeError) -> bool:
-    return 'disconnect message has been received' in str(exc)
+def is_disconnect_error(exc: Exception) -> bool:
+    if isinstance(exc, RuntimeError):
+        return "disconnect message has been received" in str(exc)
+    if isinstance(exc, genai_errors.APIError):
+        return exc.code == 1000
+    return False
 
 
 # FastAPI app lifecycle and proxied HTTP routes.
@@ -278,7 +297,7 @@ async def tile_socket(ws: WebSocket, session_id: str) -> None:
             await ws.receive()
     except WebSocketDisconnect:
         pass
-    except RuntimeError as exc:
+    except (RuntimeError, genai_errors.APIError) as exc:
         if not is_disconnect_error(exc):
             raise
     finally:
@@ -301,7 +320,7 @@ async def live_socket(ws: WebSocket, user_id: str, session_id: str) -> None:
         )
     except WebSocketDisconnect:
         pass
-    except RuntimeError as exc:
+    except (RuntimeError, genai_errors.APIError) as exc:
         if not is_disconnect_error(exc):
             raise
     finally:

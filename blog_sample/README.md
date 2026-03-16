@@ -27,6 +27,7 @@ Current differences from `hosted_app`:
 cd blog_sample
 gcloud auth application-default login
 gcloud services enable aiplatform.googleapis.com
+export GOOGLE_GENAI_USE_VERTEXAI=TRUE
 export GOOGLE_CLOUD_PROJECT=YOUR_PROJECT_ID
 export GOOGLE_CLOUD_LOCATION=us-central1
 uv run \
@@ -35,6 +36,8 @@ uv run \
   --with google-cloud-aiplatform \
   --with certifi \
   uvicorn main:app --host 127.0.0.1 --port 8080
+
+# open http://127.0.0.1:8080/ with browser
 ```
 
 This uses a blog-sample-specific runtime instead of reusing the `hosted_app`
@@ -52,6 +55,7 @@ http://127.0.0.1:8080/
 
 - `GOOGLE_CLOUD_PROJECT`: Vertex AI project for local live testing
 - `GOOGLE_CLOUD_LOCATION`: Vertex AI region for the live model
+- `GOOGLE_GENAI_USE_VERTEXAI=TRUE`: use Vertex AI as the live model backend
 
 These values are currently hardcoded in `blog_sample/main.py`:
 

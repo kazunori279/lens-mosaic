@@ -120,6 +120,18 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
+def _ignore_normal_live_close(record: logging.LogRecord) -> bool:
+    exc = record.exc_info[1] if record.exc_info else None
+    return not (
+        isinstance(exc, genai.errors.APIError) and exc.code == 1000
+    )
+
+
+logging.getLogger(
+    "google_adk.google.adk.flows.llm_flows.base_llm_flow"
+).addFilter(_ignore_normal_live_close)
+
+
 class EmbeddingRateLimitExceeded(RuntimeError):
     """Raised when the app-side Gemini embedding RPM budget has been exhausted."""
 
@@ -882,8 +894,12 @@ async def agent_to_client(
         await ws.send_text(event.model_dump_json(exclude_none=True, by_alias=True))
 
 
-def is_disconnect_error(exc: RuntimeError) -> bool:
-    return "disconnect message has been received" in str(exc)
+def is_disconnect_error(exc: Exception) -> bool:
+    if isinstance(exc, RuntimeError):
+        return "disconnect message has been received" in str(exc)
+    if isinstance(exc, genai.errors.APIError):
+        return exc.code == 1000
+    return False
 
 
 app = FastAPI(title="LensMosaic Hosted App", version="0.1.0")
@@ -1060,13 +1076,11 @@ async def live_socket(ws: WebSocket, user_id: str, session_id: str) -> None:
         )
     except WebSocketDisconnect:
         logger.debug("Client disconnected")
-    except RuntimeError as exc:
+    except Exception as exc:
         if is_disconnect_error(exc):
             logger.debug("Client disconnected")
         else:
             logger.error("Streaming error: %s", exc, exc_info=True)
-    except Exception as exc:
-        logger.error("Streaming error: %s", exc, exc_info=True)
     finally:
         queue.close()
         session.user_id = None
