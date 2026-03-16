@@ -48,9 +48,11 @@ RANKING_CONFIG = (
     f"projects/{PROJECT_ID}/locations/global/rankingConfigs/default_ranking_config"
 )
 SEARCH_TOP_K = 100
+MAX_TILE_ITEMS = 64
 COLLECTION_ID = os.getenv("LENS_MOSAIC_COLLECTION_ID", "mercari3m-collection-mm2")
 DEFAULT_IMAGE_MIME_TYPE = "image/jpeg"
-RRF_K = 60.0
+TEXT_QUERY_HYBRID_WEIGHTS = [1.35, 0.65]
+IMAGE_QUERY_HYBRID_WEIGHTS = [0.65, 1.35]
 EMBEDDING_MAX_RETRIES = 3
 EMBEDDING_RETRY_BASE_DELAY_SECONDS = 0.5
 EMBEDDING_MAX_RPM_ENV = "LENS_MOSAIC_GEMINI_EMBEDDING_MAX_RPM"
@@ -241,11 +243,14 @@ def _search_result_to_dict(result: vectorsearch_v1beta.SearchResult) -> dict | N
     obj = result.data_object
     if obj is None:
         return None
-    item_id = obj.name.split("/")[-1]
+    item_id = obj.data_object_id or obj.name.split("/")[-1]
     data = obj.data
     if data is None:
-        logger.warning("Skipping search result with missing data for item %s", item_id)
-        return None
+        details = _get_item_details(item_id)
+        if details is None:
+            logger.warning("Skipping search result with missing data for item %s", item_id)
+            return None
+        data = details
     return {
         "id": item_id,
         "name": data.get("name", ""),
@@ -307,19 +312,15 @@ def _embed_with_gemini_embedding_2(
 def _generate_query_embedding(
     text: str | None = None,
     image: bytes | None = None,
-) -> tuple[str, list[float], float]:
-    """Generate the Gemini embedding query vector and target field."""
-    if text is not None:
-        vector_field = ACTIVE_COLLECTION.text_vector_field
-    elif image is not None:
-        vector_field = ACTIVE_COLLECTION.image_vector_field
-    else:
+) -> tuple[list[float], float]:
+    """Generate the Gemini embedding query vector."""
+    if text is None and image is None:
         raise ValueError("Either text or image must be provided for embedding")
 
     started_at = perf_counter()
     embedding = _embed_with_gemini_embedding_2(text=text, image=image)
     embed_ms = (perf_counter() - started_at) * 1000
-    return vector_field, embedding, embed_ms
+    return embedding, embed_ms
 
 
 def _collection_search(
@@ -330,21 +331,18 @@ def _collection_search(
     """Search the active Gemini Embedding collection by text or image."""
     started_at = perf_counter()
     source = "text" if text is not None else "image"
-    results, embed_ms, text_search_ms, image_search_ms, rrf_ms, rerank_ms = (
+    results, embed_ms, batch_search_ms, rerank_ms = (
         _hybrid_collection_search(text=text, image=image, rerank=rerank)
     )
     total_ms = (perf_counter() - started_at) * 1000
     logger.info(
         "Search latency: model=%s source=%s rerank=%s embed_ms=%.1f "
-        "text_search_ms=%.1f image_search_ms=%.1f rrf_ms=%.1f rerank_ms=%.1f "
-        "total_ms=%.1f results=%d",
+        "batch_search_ms=%.1f rerank_ms=%.1f total_ms=%.1f results=%d",
         ACTIVE_COLLECTION.embedding_model,
         source,
         rerank,
         embed_ms,
-        text_search_ms,
-        image_search_ms,
-        rrf_ms,
+        batch_search_ms,
         rerank_ms,
         total_ms,
         len(results),
@@ -352,76 +350,59 @@ def _collection_search(
     return results
 
 
-def _vector_search_by_field(
-    vector_field: str,
-    embedding: list[float],
-) -> tuple[list[dict], float]:
-    """Run one vector search against a specific field and keep inline data only."""
-    started_at = perf_counter()
-    request = vectorsearch_v1beta.SearchDataObjectsRequest(
-        parent=_collection_path(),
-        vector_search=vectorsearch_v1beta.VectorSearch(
-            search_field=vector_field,
-            vector=vectorsearch_v1beta.DenseVector(values=embedding),
-            top_k=SEARCH_TOP_K,
-            output_fields=vectorsearch_v1beta.OutputFields(
-                data_fields=["name", "description"]
-            ),
-        ),
-    )
-    response = search_client.search_data_objects(request)
-    items: list[dict] = []
-    for result in response:
-        item = _search_result_to_dict(result)
-        if item is not None:
-            items.append(item)
-    return items, (perf_counter() - started_at) * 1000
-
-
-def _rrf_fuse_results(result_sets: list[list[dict]]) -> list[dict]:
-    """Fuse ranked result lists with Reciprocal Rank Fusion."""
-    fused: dict[str, dict] = {}
-    for result_set in result_sets:
-        for rank, item in enumerate(result_set, start=1):
-            existing = fused.get(item["id"])
-            rrf_score = 1.0 / (RRF_K + rank)
-            if existing is None:
-                fused[item["id"]] = {
-                    "id": item["id"],
-                    "name": item["name"],
-                    "description": item["description"],
-                    "score": rrf_score,
-                }
-                continue
-            existing["score"] += rrf_score
-            if not existing["name"] and item["name"]:
-                existing["name"] = item["name"]
-            if not existing["description"] and item["description"]:
-                existing["description"] = item["description"]
-
-    return sorted(fused.values(), key=lambda item: item["score"], reverse=True)[
-        :SEARCH_TOP_K
-    ]
-
-
 def _hybrid_collection_search(
     text: str | None = None,
     image: bytes | None = None,
     rerank: bool = True,
-) -> tuple[list[dict], float, float, float, float, float]:
-    """Search Gemini Embedding 2 collections across text and image vectors via RRF."""
-    _, embedding, embed_ms = _generate_query_embedding(text=text, image=image)
-    text_results, text_search_ms = _vector_search_by_field(
-        ACTIVE_COLLECTION.text_vector_field,
-        embedding,
+) -> tuple[list[dict], float, float, float]:
+    """Search Gemini Embedding 2 collections via VS2 batch search with built-in RRF."""
+    embedding, embed_ms = _generate_query_embedding(text=text, image=image)
+    weights = TEXT_QUERY_HYBRID_WEIGHTS if text is not None else IMAGE_QUERY_HYBRID_WEIGHTS
+    batch_started_at = perf_counter()
+    request = vectorsearch_v1beta.BatchSearchDataObjectsRequest(
+        parent=_collection_path(),
+        searches=[
+            vectorsearch_v1beta.Search(
+                vector_search=vectorsearch_v1beta.VectorSearch(
+                    search_field=ACTIVE_COLLECTION.text_vector_field,
+                    vector=vectorsearch_v1beta.DenseVector(values=embedding),
+                    top_k=SEARCH_TOP_K,
+                    output_fields=vectorsearch_v1beta.OutputFields(
+                        data_fields=["name", "description"]
+                    ),
+                )
+            ),
+            vectorsearch_v1beta.Search(
+                vector_search=vectorsearch_v1beta.VectorSearch(
+                    search_field=ACTIVE_COLLECTION.image_vector_field,
+                    vector=vectorsearch_v1beta.DenseVector(values=embedding),
+                    top_k=SEARCH_TOP_K,
+                    output_fields=vectorsearch_v1beta.OutputFields(
+                        data_fields=["name", "description"]
+                    ),
+                )
+            ),
+        ],
+        combine=vectorsearch_v1beta.BatchSearchDataObjectsRequest.CombineResultsOptions(
+            ranker=vectorsearch_v1beta.Ranker(
+                rrf=vectorsearch_v1beta.ReciprocalRankFusion(
+                    weights=weights
+                )
+            ),
+            output_fields=vectorsearch_v1beta.OutputFields(
+                data_fields=["name", "description"]
+            ),
+            top_k=SEARCH_TOP_K,
+        ),
     )
-    image_results, image_search_ms = _vector_search_by_field(
-        ACTIVE_COLLECTION.image_vector_field,
-        embedding,
-    )
-    rrf_started_at = perf_counter()
-    fused_results = _rrf_fuse_results([text_results, image_results])
-    rrf_ms = (perf_counter() - rrf_started_at) * 1000
+    response = search_client.batch_search_data_objects(request)
+    batch_search_ms = (perf_counter() - batch_started_at) * 1000
+    fused_response = response.results[0].results if response.results else []
+    fused_results: list[dict] = []
+    for result in fused_response:
+        item = _search_result_to_dict(result)
+        if item is not None:
+            fused_results.append(item)
     if rerank:
         rerank_started_at = perf_counter()
         ranked_results = _rank_results(text or "", fused_results)
@@ -429,14 +410,7 @@ def _hybrid_collection_search(
     else:
         ranked_results = fused_results
         rerank_ms = 0.0
-    return (
-        ranked_results,
-        embed_ms,
-        text_search_ms,
-        image_search_ms,
-        rrf_ms,
-        rerank_ms,
-    )
+    return ranked_results, embed_ms, batch_search_ms, rerank_ms
 
 
 def _rank_results(query: str, results: list[dict]) -> list[dict]:
@@ -663,13 +637,13 @@ async def _publish_similar_results(
     session = SESSION_STATES.get(session_id)
     if session is None or not session.should_publish_similar():
         return
-    session.similar = results
+    session.similar = results[:MAX_TILE_ITEMS]
     await session.send(
         {
             "kind": "similar",
             "sessionId": session.session_id,
             "userId": session.user_id,
-            "items": results,
+            "items": session.similar,
         }
     )
 
@@ -781,7 +755,9 @@ def _run_find_items_for_session(
     started_at = perf_counter()
     reused_cached_results = False
     try:
-        session.recommended = search_text_queries_sync(queries, ranking_query)
+        session.recommended = search_text_queries_sync(queries, ranking_query)[
+            :MAX_TILE_ITEMS
+        ]
     except EmbeddingRateLimitExceeded as exc:
         reused_cached_results = True
         logger.warning(

@@ -258,7 +258,7 @@ main {
 }
 
 #image-tile {
-  --tile-grid-size: 9;
+  --tile-grid-size: 8;
   display: grid;
   grid-template-columns: repeat(var(--tile-grid-size), 1fr);
   grid-template-rows: repeat(var(--tile-grid-size), auto);
