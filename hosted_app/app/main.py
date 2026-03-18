@@ -706,7 +706,7 @@ async def _publish_similar_results(
     session = SESSION_STATES.get(session_id)
     if session is None or not session.should_publish_similar():
         return
-    session.similar = results[:MAX_TILE_ITEMS]
+    session.similar = list(results)
     await session.send(
         {
             "kind": "similar",

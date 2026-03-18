@@ -8,12 +8,11 @@ const textInput = document.getElementById("text-input");
 const startBtn = document.getElementById("start-btn");
 const closeRecommendedBtn = document.getElementById("close-recommended-btn");
 const flipCameraBtn = document.getElementById("flip-camera-btn");
-const cameraDebugEl = document.getElementById("camera-debug");
 const videoContainer = document.getElementById("video-container");
 const videoEl = document.getElementById("camera");
 const canvasEl = document.getElementById("canvas");
 const AGENT_VISION_SEND_MS = 1000;
-const CAMERA_FRAME_SCALE = 0.5;
+const CAMERA_FRAME_WIDTH = 320;
 
 let ws = null;
 let micOn = false;
@@ -187,27 +186,6 @@ function escapeHtml(s) {
   return d.innerHTML;
 }
 
-function formatBytes(bytes) {
-  if (!Number.isFinite(bytes) || bytes <= 0) return "--";
-  if (bytes < 1024) return `${bytes} B`;
-  const kib = bytes / 1024;
-  if (kib < 1024) return `${kib.toFixed(1)} KiB`;
-  return `${(kib / 1024).toFixed(2)} MiB`;
-}
-
-function base64PayloadBytes(b64) {
-  if (!b64) return 0;
-  const padding = b64.endsWith("==") ? 2 : b64.endsWith("=") ? 1 : 0;
-  return Math.floor((b64.length * 3) / 4) - padding;
-}
-
-function updateCameraDebug(width = null, height = null, payloadBytes = null) {
-  if (!cameraDebugEl) return;
-  const frameText = width && height ? `${width}x${height}` : "--";
-  const sizeText = payloadBytes != null ? formatBytes(payloadBytes) : "--";
-  cameraDebugEl.textContent = `Frame ${frameText} | JPEG ${sizeText}`;
-}
-
 function base64ToBytes(b64) {
   // Convert base64url to standard base64
   let std = b64.replace(/-/g, "+").replace(/_/g, "/");
@@ -288,7 +266,6 @@ async function startCamera() {
   videoContainer.classList.add("active");
   camOn = true;
   lastAgentVisionSentAt = 0;
-  updateCameraDebug();
 
   // Send frames every 1s
   camInterval = setInterval(captureAndSend, 1000);
@@ -307,7 +284,6 @@ function stopCamera() {
   videoContainer.classList.remove("active");
   camOn = false;
   lastAgentVisionSentAt = 0;
-  updateCameraDebug();
 }
 
 function captureAndSend() {
@@ -316,8 +292,13 @@ function captureAndSend() {
   const sendForAgentVision = now - lastAgentVisionSentAt >= AGENT_VISION_SEND_MS;
   if (!videoEl.videoWidth) return;
 
-  const targetWidth = Math.max(1, Math.round(videoEl.videoWidth * CAMERA_FRAME_SCALE));
-  const targetHeight = Math.max(1, Math.round(videoEl.videoHeight * CAMERA_FRAME_SCALE));
+  const targetWidth = videoEl.videoWidth > CAMERA_FRAME_WIDTH
+    ? CAMERA_FRAME_WIDTH
+    : videoEl.videoWidth;
+  const targetHeight = Math.max(
+    1,
+    Math.round((videoEl.videoHeight * targetWidth) / videoEl.videoWidth),
+  );
   canvasEl.width = targetWidth;
   canvasEl.height = targetHeight;
   const ctx = canvasEl.getContext("2d");
@@ -325,8 +306,6 @@ function captureAndSend() {
 
   const dataUrl = canvasEl.toDataURL("image/jpeg", 0.6);
   const b64 = dataUrl.split(",")[1];
-  const payloadBytes = base64PayloadBytes(b64);
-  updateCameraDebug(canvasEl.width, canvasEl.height, payloadBytes);
   ws.send(
     JSON.stringify({
       type: "image",
@@ -357,6 +336,7 @@ async function flipCamera() {
 const imageTileEl = document.getElementById("image-tile");
 const TILE_FADE_MS = 1333;
 const RECOMMENDED_AUTO_CLOSE_MS = 30000;
+const SIMILAR_TILE_STALE_MS = 2000;
 
 function getGridSize() {
   const size = Number.parseInt(
@@ -410,6 +390,10 @@ class MosaicCellView {
 
   getAssignedId() {
     return this.pending?.id ?? this.current?.id ?? null;
+  }
+
+  getAssignedRecord() {
+    return this.pending ?? this.current ?? null;
   }
 
   clear() {
@@ -653,22 +637,36 @@ class MosaicController {
           normalized,
           lastSeen: Date.now(),
         };
-      })
-      .slice(0, this.gridSize * this.gridSize);
+      });
   }
 
   computeAssignments(desiredTiles) {
     const desiredById = new Map(desiredTiles.map((tile) => [tile.id, tile]));
     const assignments = new Map();
     const reservedCells = new Set();
+    const now = Date.now();
 
     for (const cell of this.cells) {
       const assignedId = cell.getAssignedId();
-      if (!assignedId || !desiredById.has(assignedId) || reservedCells.has(cell.cell)) {
+      const assignedRecord = cell.getAssignedRecord();
+      if (!assignedId || !assignedRecord || reservedCells.has(cell.cell)) {
         continue;
       }
-      assignments.set(cell.cell, desiredById.get(assignedId));
-      desiredById.delete(assignedId);
+      if (desiredById.has(assignedId)) {
+        assignments.set(cell.cell, desiredById.get(assignedId));
+        desiredById.delete(assignedId);
+        reservedCells.add(cell.cell);
+        continue;
+      }
+      if (
+        this.source === "similar"
+        && assignedRecord.lastSeen
+        && now - assignedRecord.lastSeen <= SIMILAR_TILE_STALE_MS
+      ) {
+        assignments.set(cell.cell, assignedRecord);
+      } else {
+        continue;
+      }
       reservedCells.add(cell.cell);
     }
 
@@ -762,10 +760,10 @@ function renderTileItems(items, source) {
   mosaicController.render(items, source);
 }
 
-// Periodic cleanup: remove tiles not seen in results for 5s (only in similar mode)
+// Periodic cleanup: remove tiles not seen in results for 2s (only in similar mode)
 setInterval(() => {
   if (Date.now() < tilePausedUntil) return;
-  mosaicController.pruneStaleSimilarTiles(5000);
+  mosaicController.pruneStaleSimilarTiles(SIMILAR_TILE_STALE_MS);
 }, 1000);
 
 function connectImageTile() {
