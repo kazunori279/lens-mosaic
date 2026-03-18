@@ -553,8 +553,6 @@ class SessionState:
     similar: list[dict] = field(default_factory=list)
     recommended: list[dict] = field(default_factory=list)
     tile_client: WebSocket | None = None
-    live_client: WebSocket | None = None
-    live_connection_id: int = 0
     image_version: int = 0
     search_enqueued: bool = False
     search_running: bool = False
@@ -610,25 +608,6 @@ class SessionState:
         with self.state_lock:
             return self.latest_image is not None
 
-    def attach_live_client(
-        self, ws: WebSocket, user_id: str | None
-    ) -> tuple[WebSocket | None, int]:
-        with self.state_lock:
-            previous_ws = self.live_client
-            self.live_client = ws
-            self.live_connection_id += 1
-            if user_id is not None:
-                self.user_id = user_id
-            return previous_ws, self.live_connection_id
-
-    def detach_live_client(self, ws: WebSocket, connection_id: int) -> bool:
-        with self.state_lock:
-            if self.live_client is not ws or self.live_connection_id != connection_id:
-                return False
-            self.live_client = None
-            self.user_id = None
-            return True
-
     async def send(self, payload: dict) -> None:
         ws = self.tile_client
         if ws is None:
@@ -657,7 +636,6 @@ RUNNER = Runner(app_name=APP_NAME, agent=agent, session_service=SESSION_SERVICE)
 RUN_CONFIG = RunConfig(
     streaming_mode=StreamingMode.BIDI,
     response_modalities=["AUDIO"],
-    session_resumption=types.SessionResumptionConfig(),
 )
 MAIN_LOOP: asyncio.AbstractEventLoop | None = None
 SEARCH_REQUEST_QUEUE: queue.Queue[str | None] = queue.Queue()
@@ -678,7 +656,7 @@ def session_state_for(
 
 
 def cleanup(session_id: str, session: SessionState) -> None:
-    if session.tile_client is not None or session.live_client is not None:
+    if session.tile_client is not None or session.user_id is not None:
         return
     session.stop()
     SESSION_STATES.pop(session_id, None)
@@ -878,22 +856,27 @@ def _run_find_items_for_session(
     return session.recommended, latency_ms
 
 
-def find_items(
-    queries: list[str], ranking_query: str, tool_context: ToolContext
-) -> str:
+async def find_items(
+    queries: list[str],
+    ranking_query: str,
+    tool_context: ToolContext,
+    input_stream: LiveRequestQueue = None,
+):
     """Find shopping items that match one or more product description queries.
 
     Use this tool when you want to show the user product candidates on screen.
     Provide a list of descriptive English product-search queries. The tool
-    searches and publishes the matched items to the UI, then uses ranking_query
-    for the final Ranking API rerank across all merged candidates.
+    searches and publishes the matched items to the UI, then yields the top item
+    names back to the live agent. ranking_query is used for the final Ranking API
+    rerank across all merged candidates.
 
     Args:
         queries: One or more descriptive English product-search queries.
         ranking_query: A short English description used for final reranking.
         tool_context: ADK tool context for the current user session.
+        input_stream: ADK live input stream for streaming tools.
 
-    Returns:
+    Yields:
         A comma-separated string of top matched item names, or "No items found".
     """
     recommended, _ = _run_find_items_for_session(
@@ -904,7 +887,7 @@ def find_items(
         publish=True,
     )
     names = [item["name"] for item in recommended[:3]]
-    return ", ".join(names) if names else "No items found"
+    yield ", ".join(names) if names else "No items found"
 
 
 agent.tools.append(find_items)
@@ -1132,27 +1115,6 @@ async def live_socket(ws: WebSocket, user_id: str, session_id: str) -> None:
     await ensure_adk_session(user_id, session_id)
 
     session = session_state_for(session_id, user_id)
-    previous_live_ws, connection_id = session.attach_live_client(ws, user_id)
-    if previous_live_ws is not None and previous_live_ws is not ws:
-        logger.warning(
-            "Superseding existing live websocket for session_id=%s user_id=%s",
-            session_id,
-            user_id,
-        )
-        try:
-            await previous_live_ws.close(code=1012, reason="Superseded by a newer connection")
-        except Exception:
-            logger.debug(
-                "Previous live websocket close failed for session_id=%s",
-                session_id,
-                exc_info=True,
-            )
-    logger.info(
-        "Accepted live websocket connection_id=%d for session_id=%s user_id=%s",
-        connection_id,
-        session_id,
-        user_id,
-    )
     session.start()
     queue = LiveRequestQueue()
 
@@ -1170,20 +1132,5 @@ async def live_socket(ws: WebSocket, user_id: str, session_id: str) -> None:
             logger.error("Streaming error: %s", exc, exc_info=True)
     finally:
         queue.close()
-        detached_current = session.detach_live_client(ws, connection_id)
-        if detached_current:
-            logger.info(
-                "Closed live websocket connection_id=%d for session_id=%s user_id=%s",
-                connection_id,
-                session_id,
-                user_id,
-            )
-        else:
-            logger.info(
-                "Ignored cleanup from superseded live websocket connection_id=%d "
-                "for session_id=%s user_id=%s",
-                connection_id,
-                session_id,
-                user_id,
-            )
+        session.user_id = None
         cleanup(session_id, session)
