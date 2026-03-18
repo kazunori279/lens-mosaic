@@ -665,9 +665,35 @@ def cleanup(session_id: str, session: SessionState) -> None:
 
 
 def search_text_queries_sync(queries: list[str], ranking_query: str) -> list[dict]:
+    query_results: list[list[dict] | None] = [None] * len(queries)
+    query_errors: list[Exception | None] = [None] * len(queries)
+
+    def run_query(index: int, query: str) -> None:
+        try:
+            query_results[index] = _collection_search(text=query, rerank=False)
+        except Exception as exc:
+            query_errors[index] = exc
+
+    workers = [
+        threading.Thread(
+            target=run_query,
+            args=(index, query),
+            name=f"lens-mosaic-recommend-search-{index}",
+        )
+        for index, query in enumerate(queries)
+    ]
+    for worker in workers:
+        worker.start()
+    for worker in workers:
+        worker.join()
+
+    for exc in query_errors:
+        if exc is not None:
+            raise exc
+
     seen, items = set(), []
-    for query in queries:
-        for item in _collection_search(text=query, rerank=False):
+    for results in query_results:
+        for item in results or []:
             if item["id"] not in seen:
                 seen.add(item["id"])
                 items.append(item)

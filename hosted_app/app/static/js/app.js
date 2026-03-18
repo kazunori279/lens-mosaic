@@ -326,7 +326,7 @@ async function flipCamera() {
 // --- Image Tile WebSocket ---
 
 const imageTileEl = document.getElementById("image-tile");
-const TILE_FADE_MS = 2000;
+const TILE_FADE_MS = 1333;
 const RECOMMENDED_AUTO_CLOSE_MS = 30000;
 
 function getGridSize() {

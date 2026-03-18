@@ -4,6 +4,7 @@ import base64
 import math
 import queue
 import sys
+import threading
 import unittest
 from contextlib import contextmanager
 from pathlib import Path
@@ -272,6 +273,104 @@ class SearchIntegrationTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json(), ranked_results)
         rank_mock.assert_called_once_with("best speaker", request_results)
+
+    def test_search_text_queries_sync_runs_each_query_in_a_thread_then_reranks(self) -> None:
+        calls: list[tuple[str, str]] = []
+        calls_lock = threading.Lock()
+        query_results = {
+            "red bag": [
+                {
+                    "id": "item-1",
+                    "name": "Red Bag",
+                    "description": "Compact bag",
+                    "score": 0.9,
+                },
+                {
+                    "id": "item-2",
+                    "name": "Crossbody Bag",
+                    "description": "Lightweight bag",
+                    "score": 0.8,
+                },
+            ],
+            "small purse": [
+                {
+                    "id": "item-2",
+                    "name": "Crossbody Bag",
+                    "description": "Lightweight bag",
+                    "score": 0.7,
+                },
+                {
+                    "id": "item-3",
+                    "name": "Mini Purse",
+                    "description": "Small evening purse",
+                    "score": 0.6,
+                },
+            ],
+        }
+        reranked_results = [
+            {
+                "id": "item-3",
+                "name": "Mini Purse",
+                "description": "Small evening purse",
+                "score": 0.99,
+            }
+        ]
+
+        def fake_collection_search(*, text=None, image=None, rerank=True):
+            self.assertIsNone(image)
+            self.assertFalse(rerank)
+            self.assertIsNotNone(text)
+            with calls_lock:
+                calls.append((threading.current_thread().name, text))
+            return query_results[text]
+
+        with (
+            patch.object(
+                app_main,
+                "_collection_search",
+                side_effect=fake_collection_search,
+            ) as search_mock,
+            patch.object(
+                app_main,
+                "_rank_results",
+                return_value=reranked_results,
+            ) as rank_mock,
+        ):
+            results = app_main.search_text_queries_sync(
+                ["red bag", "small purse"],
+                "daily handbag",
+            )
+
+        self.assertEqual(results, reranked_results)
+        self.assertEqual(search_mock.call_count, 2)
+        self.assertCountEqual(
+            [query for _thread_name, query in calls],
+            ["red bag", "small purse"],
+        )
+        self.assertTrue(all(thread_name != "MainThread" for thread_name, _query in calls))
+        rank_mock.assert_called_once_with(
+            "daily handbag",
+            [
+                {
+                    "id": "item-1",
+                    "name": "Red Bag",
+                    "description": "Compact bag",
+                    "score": 0.9,
+                },
+                {
+                    "id": "item-2",
+                    "name": "Crossbody Bag",
+                    "description": "Lightweight bag",
+                    "score": 0.8,
+                },
+                {
+                    "id": "item-3",
+                    "name": "Mini Purse",
+                    "description": "Small evening purse",
+                    "score": 0.6,
+                },
+            ],
+        )
 
     def test_get_item_endpoint_returns_item_details(self) -> None:
         item = {
