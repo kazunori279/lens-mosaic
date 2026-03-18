@@ -30,15 +30,21 @@ gcloud services enable aiplatform.googleapis.com
 export GOOGLE_GENAI_USE_VERTEXAI=TRUE
 export GOOGLE_CLOUD_PROJECT=YOUR_PROJECT_ID
 export GOOGLE_CLOUD_LOCATION=us-central1
+export LENS_MOSAIC_LOCAL_LOG=/tmp/lens-mosaic-blog-sample.log
+: > "$LENS_MOSAIC_LOCAL_LOG"
 uv run \
   --with google-adk \
   --with google-genai \
   --with google-cloud-aiplatform \
   --with certifi \
-  uvicorn main:app --host 127.0.0.1 --port 8080
+  uvicorn main:app --host 127.0.0.1 --port 8080 \
+  2>&1 | tee -a "$LENS_MOSAIC_LOCAL_LOG"
 
 # open http://127.0.0.1:8080/ with browser
 ```
+
+This keeps local server output in the terminal and also persists it to
+`/tmp/lens-mosaic-blog-sample.log`.
 
 This uses a blog-sample-specific runtime instead of reusing the `hosted_app`
 project environment.

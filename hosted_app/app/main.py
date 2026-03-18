@@ -553,6 +553,8 @@ class SessionState:
     similar: list[dict] = field(default_factory=list)
     recommended: list[dict] = field(default_factory=list)
     tile_client: WebSocket | None = None
+    live_client: WebSocket | None = None
+    live_connection_id: int = 0
     image_version: int = 0
     search_enqueued: bool = False
     search_running: bool = False
@@ -608,6 +610,25 @@ class SessionState:
         with self.state_lock:
             return self.latest_image is not None
 
+    def attach_live_client(
+        self, ws: WebSocket, user_id: str | None
+    ) -> tuple[WebSocket | None, int]:
+        with self.state_lock:
+            previous_ws = self.live_client
+            self.live_client = ws
+            self.live_connection_id += 1
+            if user_id is not None:
+                self.user_id = user_id
+            return previous_ws, self.live_connection_id
+
+    def detach_live_client(self, ws: WebSocket, connection_id: int) -> bool:
+        with self.state_lock:
+            if self.live_client is not ws or self.live_connection_id != connection_id:
+                return False
+            self.live_client = None
+            self.user_id = None
+            return True
+
     async def send(self, payload: dict) -> None:
         ws = self.tile_client
         if ws is None:
@@ -657,7 +678,7 @@ def session_state_for(
 
 
 def cleanup(session_id: str, session: SessionState) -> None:
-    if session.tile_client is not None or session.user_id is not None:
+    if session.tile_client is not None or session.live_client is not None:
         return
     session.stop()
     SESSION_STATES.pop(session_id, None)
@@ -1111,6 +1132,27 @@ async def live_socket(ws: WebSocket, user_id: str, session_id: str) -> None:
     await ensure_adk_session(user_id, session_id)
 
     session = session_state_for(session_id, user_id)
+    previous_live_ws, connection_id = session.attach_live_client(ws, user_id)
+    if previous_live_ws is not None and previous_live_ws is not ws:
+        logger.warning(
+            "Superseding existing live websocket for session_id=%s user_id=%s",
+            session_id,
+            user_id,
+        )
+        try:
+            await previous_live_ws.close(code=1012, reason="Superseded by a newer connection")
+        except Exception:
+            logger.debug(
+                "Previous live websocket close failed for session_id=%s",
+                session_id,
+                exc_info=True,
+            )
+    logger.info(
+        "Accepted live websocket connection_id=%d for session_id=%s user_id=%s",
+        connection_id,
+        session_id,
+        user_id,
+    )
     session.start()
     queue = LiveRequestQueue()
 
@@ -1128,5 +1170,20 @@ async def live_socket(ws: WebSocket, user_id: str, session_id: str) -> None:
             logger.error("Streaming error: %s", exc, exc_info=True)
     finally:
         queue.close()
-        session.user_id = None
+        detached_current = session.detach_live_client(ws, connection_id)
+        if detached_current:
+            logger.info(
+                "Closed live websocket connection_id=%d for session_id=%s user_id=%s",
+                connection_id,
+                session_id,
+                user_id,
+            )
+        else:
+            logger.info(
+                "Ignored cleanup from superseded live websocket connection_id=%d "
+                "for session_id=%s user_id=%s",
+                connection_id,
+                session_id,
+                user_id,
+            )
         cleanup(session_id, session)

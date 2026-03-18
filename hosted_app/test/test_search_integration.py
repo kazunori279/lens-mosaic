@@ -510,6 +510,42 @@ class SearchIntegrationTests(unittest.TestCase):
             "bookshelf speaker for a small room",
         )
 
+    def test_session_state_replaces_live_websocket_without_clearing_new_connection(self) -> None:
+        session = app_main.session_state_for("session-1", "user-1")
+        first_ws = object()
+        second_ws = object()
+
+        previous_ws, first_connection_id = session.attach_live_client(first_ws, "user-1")
+        self.assertIsNone(previous_ws)
+        self.assertIs(session.live_client, first_ws)
+        self.assertEqual(session.user_id, "user-1")
+
+        previous_ws, second_connection_id = session.attach_live_client(second_ws, "user-1")
+        self.assertIs(previous_ws, first_ws)
+        self.assertIs(session.live_client, second_ws)
+        self.assertEqual(second_connection_id, first_connection_id + 1)
+
+        detached_current = session.detach_live_client(first_ws, first_connection_id)
+        self.assertFalse(detached_current)
+        self.assertIs(session.live_client, second_ws)
+        self.assertEqual(session.user_id, "user-1")
+
+        detached_current = session.detach_live_client(second_ws, second_connection_id)
+        self.assertTrue(detached_current)
+        self.assertIsNone(session.live_client)
+        self.assertIsNone(session.user_id)
+
+    def test_cleanup_keeps_session_state_while_live_websocket_is_active(self) -> None:
+        session = app_main.session_state_for("session-1", "user-1")
+        _previous_ws, connection_id = session.attach_live_client(object(), "user-1")
+
+        app_main.cleanup("session-1", session)
+        self.assertIn("session-1", app_main.SESSION_STATES)
+
+        session.detach_live_client(session.live_client, connection_id)
+        app_main.cleanup("session-1", session)
+        self.assertNotIn("session-1", app_main.SESSION_STATES)
+
     def test_similar_test_endpoint_decodes_image_and_updates_session(self) -> None:
         image_bytes = b"fake-image"
         image_b64 = base64.b64encode(image_bytes).decode("ascii")

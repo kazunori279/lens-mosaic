@@ -160,12 +160,19 @@ Start the hosted app over HTTPS:
 
 ```bash
 cd hosted_app/app
+export LENS_MOSAIC_LOCAL_LOG=/tmp/lens-mosaic-hosted-app.log
+: > "$LENS_MOSAIC_LOCAL_LOG"
 uv run --project .. uvicorn main:app \
   --host 0.0.0.0 \
   --port 8080 \
   --ssl-keyfile certs/lan-key.pem \
-  --ssl-certfile certs/lan-cert.pem
+  --ssl-certfile certs/lan-cert.pem \
+  2>&1 | tee -a "$LENS_MOSAIC_LOCAL_LOG"
 ```
+
+This keeps the live server output visible in your terminal and also persists it to
+`/tmp/lens-mosaic-hosted-app.log` for debugging. In another terminal, you can watch
+the log with `tail -f /tmp/lens-mosaic-hosted-app.log`.
 
 Verify from your Mac before moving to the phone:
 
