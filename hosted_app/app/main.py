@@ -350,6 +350,24 @@ def _collection_search(
     return results
 
 
+def _image_similarity_search(image: bytes) -> list[dict]:
+    """Search the active collection by image similarity only."""
+    started_at = perf_counter()
+    results, embed_ms, search_ms = _image_similarity_collection_search(image=image)
+    total_ms = (perf_counter() - started_at) * 1000
+    logger.info(
+        "Search latency: model=%s source=image-similarity rerank=%s embed_ms=%.1f "
+        "search_ms=%.1f total_ms=%.1f results=%d",
+        ACTIVE_COLLECTION.embedding_model,
+        False,
+        embed_ms,
+        search_ms,
+        total_ms,
+        len(results),
+    )
+    return results
+
+
 def _hybrid_collection_search(
     text: str | None = None,
     image: bytes | None = None,
@@ -411,6 +429,31 @@ def _hybrid_collection_search(
         ranked_results = fused_results
         rerank_ms = 0.0
     return ranked_results, embed_ms, batch_search_ms, rerank_ms
+
+
+def _image_similarity_collection_search(image: bytes) -> tuple[list[dict], float, float]:
+    """Search Gemini Embedding 2 collections with the image embedding field only."""
+    embedding, embed_ms = _generate_query_embedding(image=image)
+    search_started_at = perf_counter()
+    request = vectorsearch_v1beta.SearchDataObjectsRequest(
+        parent=_collection_path(),
+        vector_search=vectorsearch_v1beta.VectorSearch(
+            search_field=ACTIVE_COLLECTION.image_vector_field,
+            vector=vectorsearch_v1beta.DenseVector(values=embedding),
+            top_k=SEARCH_TOP_K,
+            output_fields=vectorsearch_v1beta.OutputFields(
+                data_fields=["name", "description"]
+            ),
+        ),
+    )
+    response = search_client.search_data_objects(request)
+    search_ms = (perf_counter() - search_started_at) * 1000
+    results: list[dict] = []
+    for result in response.results:
+        item = _search_result_to_dict(result)
+        if item is not None:
+            results.append(item)
+    return results, embed_ms, search_ms
 
 
 def _rank_results(query: str, results: list[dict]) -> list[dict]:
@@ -676,7 +719,7 @@ def _search_worker_loop(worker_id: int) -> None:
 
         image, processed_version = search_input
         try:
-            results = _collection_search(image=image)
+            results = _image_similarity_search(image)
         except EmbeddingRateLimitExceeded as exc:
             results = list(session.similar)
             logger.warning(

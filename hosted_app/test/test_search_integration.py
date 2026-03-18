@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import math
+import queue
 import sys
 import unittest
 from contextlib import contextmanager
@@ -181,6 +182,62 @@ class SearchIntegrationTests(unittest.TestCase):
         )
         batch_search_mock.assert_called_once()
         get_item_mock.assert_called_once_with(item_id)
+
+    def test_image_similarity_search_uses_only_image_vector_field(self) -> None:
+        item_id = "item-456"
+        search_result = app_main.vectorsearch_v1beta.SearchResult(
+            data_object=app_main.vectorsearch_v1beta.DataObject(
+                name=f"{app_main._collection_path()}/dataObjects/{item_id}",
+                data_object_id=item_id,
+                data={
+                    "name": "Camera Bag",
+                    "description": "Compact shoulder bag",
+                },
+            ),
+            distance=0.73,
+        )
+        search_response = app_main.vectorsearch_v1beta.SearchDataObjectsResponse(
+            results=[search_result]
+        )
+
+        with (
+            patch.object(
+                app_main,
+                "_embed_with_gemini_embedding_2",
+                return_value=[0.1, 0.2, 0.3],
+            ),
+            patch.object(
+                app_main.search_client,
+                "search_data_objects",
+                return_value=search_response,
+            ) as search_mock,
+            patch.object(
+                app_main.search_client,
+                "batch_search_data_objects",
+            ) as batch_search_mock,
+        ):
+            results = app_main._image_similarity_search(b"image-bytes")
+
+        self.assertEqual(
+            results,
+            [
+                {
+                    "id": item_id,
+                    "name": "Camera Bag",
+                    "description": "Compact shoulder bag",
+                    "score": 0.73,
+                }
+            ],
+        )
+        search_mock.assert_called_once()
+        batch_search_mock.assert_not_called()
+        request = search_mock.call_args.args[0]
+        self.assertEqual(request.parent, app_main._collection_path())
+        self.assertEqual(
+            request.vector_search.search_field,
+            app_main.ACTIVE_COLLECTION.image_vector_field,
+        )
+        self.assertEqual(request.vector_search.top_k, app_main.SEARCH_TOP_K)
 
     def test_rank_endpoint_returns_ranked_results(self) -> None:
         ranked_results = [
@@ -385,6 +442,51 @@ class SearchIntegrationTests(unittest.TestCase):
         self.assertEqual(session.latest_image, image_bytes)
         self.assertEqual(session.image_version, 1)
         self.assertTrue(session.search_enqueued)
+
+    def test_similar_search_worker_uses_image_similarity_search(self) -> None:
+        search_queue: queue.Queue[str | None] = queue.Queue()
+        app_main.SESSION_STATES.clear()
+        session = app_main.session_state_for("session-1", "user-1")
+        session.tile_client = object()
+        with patch.object(app_main, "SEARCH_REQUEST_QUEUE", search_queue):
+            session.update_image(b"fake-image")
+            search_queue.put(None)
+
+            published_results = [
+                {
+                    "id": "similar-1",
+                    "name": "Similar Jacket",
+                    "description": "Denim jacket",
+                    "score": 0.91,
+                }
+            ]
+
+            def discard_coro(coro, _loop):
+                coro.close()
+                return None
+
+            with (
+                patch.object(
+                    app_main,
+                    "_image_similarity_search",
+                    return_value=published_results,
+                ) as image_search_mock,
+                patch.object(
+                    app_main,
+                    "_collection_search",
+                ) as hybrid_search_mock,
+                patch.object(app_main, "MAIN_LOOP", object()),
+                patch.object(
+                    app_main.asyncio,
+                    "run_coroutine_threadsafe",
+                    side_effect=discard_coro,
+                ) as publish_mock,
+            ):
+                app_main._search_worker_loop(worker_id=1)
+
+        image_search_mock.assert_called_once_with(b"fake-image")
+        hybrid_search_mock.assert_not_called()
+        publish_mock.assert_called_once()
 
     def test_similar_test_endpoint_rejects_invalid_base64(self) -> None:
         with (
