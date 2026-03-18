@@ -8,10 +8,12 @@ const textInput = document.getElementById("text-input");
 const startBtn = document.getElementById("start-btn");
 const closeRecommendedBtn = document.getElementById("close-recommended-btn");
 const flipCameraBtn = document.getElementById("flip-camera-btn");
+const cameraDebugEl = document.getElementById("camera-debug");
 const videoContainer = document.getElementById("video-container");
 const videoEl = document.getElementById("camera");
 const canvasEl = document.getElementById("canvas");
 const AGENT_VISION_SEND_MS = 1000;
+const CAMERA_FRAME_SCALE = 0.5;
 
 let ws = null;
 let micOn = false;
@@ -185,6 +187,27 @@ function escapeHtml(s) {
   return d.innerHTML;
 }
 
+function formatBytes(bytes) {
+  if (!Number.isFinite(bytes) || bytes <= 0) return "--";
+  if (bytes < 1024) return `${bytes} B`;
+  const kib = bytes / 1024;
+  if (kib < 1024) return `${kib.toFixed(1)} KiB`;
+  return `${(kib / 1024).toFixed(2)} MiB`;
+}
+
+function base64PayloadBytes(b64) {
+  if (!b64) return 0;
+  const padding = b64.endsWith("==") ? 2 : b64.endsWith("=") ? 1 : 0;
+  return Math.floor((b64.length * 3) / 4) - padding;
+}
+
+function updateCameraDebug(width = null, height = null, payloadBytes = null) {
+  if (!cameraDebugEl) return;
+  const frameText = width && height ? `${width}x${height}` : "--";
+  const sizeText = payloadBytes != null ? formatBytes(payloadBytes) : "--";
+  cameraDebugEl.textContent = `Frame ${frameText} | JPEG ${sizeText}`;
+}
+
 function base64ToBytes(b64) {
   // Convert base64url to standard base64
   let std = b64.replace(/-/g, "+").replace(/_/g, "/");
@@ -265,6 +288,7 @@ async function startCamera() {
   videoContainer.classList.add("active");
   camOn = true;
   lastAgentVisionSentAt = 0;
+  updateCameraDebug();
 
   // Send frames every 1s
   camInterval = setInterval(captureAndSend, 1000);
@@ -283,6 +307,7 @@ function stopCamera() {
   videoContainer.classList.remove("active");
   camOn = false;
   lastAgentVisionSentAt = 0;
+  updateCameraDebug();
 }
 
 function captureAndSend() {
@@ -291,13 +316,17 @@ function captureAndSend() {
   const sendForAgentVision = now - lastAgentVisionSentAt >= AGENT_VISION_SEND_MS;
   if (!videoEl.videoWidth) return;
 
-  canvasEl.width = videoEl.videoWidth;
-  canvasEl.height = videoEl.videoHeight;
+  const targetWidth = Math.max(1, Math.round(videoEl.videoWidth * CAMERA_FRAME_SCALE));
+  const targetHeight = Math.max(1, Math.round(videoEl.videoHeight * CAMERA_FRAME_SCALE));
+  canvasEl.width = targetWidth;
+  canvasEl.height = targetHeight;
   const ctx = canvasEl.getContext("2d");
-  ctx.drawImage(videoEl, 0, 0);
+  ctx.drawImage(videoEl, 0, 0, targetWidth, targetHeight);
 
   const dataUrl = canvasEl.toDataURL("image/jpeg", 0.6);
   const b64 = dataUrl.split(",")[1];
+  const payloadBytes = base64PayloadBytes(b64);
+  updateCameraDebug(canvasEl.width, canvasEl.height, payloadBytes);
   ws.send(
     JSON.stringify({
       type: "image",

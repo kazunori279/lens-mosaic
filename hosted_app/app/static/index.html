@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>LensMosaic</title>
-  <link rel="stylesheet" href="/static/css/style.css?v=10">
+  <link rel="stylesheet" href="/static/css/style.css?v=11">
 </head>
 <body>
   <div id="app">
@@ -34,6 +34,7 @@
         <button id="start-btn" disabled>Start</button>
         <div id="camera-controls">
           <button id="flip-camera-btn" type="button" aria-label="Flip camera" title="Flip camera">↺</button>
+          <div id="camera-debug" aria-live="polite">Frame -- | JPEG --</div>
         </div>
         <video id="camera" autoplay playsinline muted></video>
         <canvas id="canvas" style="display:none"></canvas>
@@ -79,6 +80,6 @@
     </div>
   </div>
 
-  <script type="module" src="/static/js/app.js?v=9"></script>
+  <script type="module" src="/static/js/app.js?v=10"></script>
 </body>
 </html>
