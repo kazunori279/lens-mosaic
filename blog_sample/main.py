@@ -27,7 +27,7 @@ AGENT_MODEL = "gemini-live-2.5-flash-native-audio"
 MAX_TILE_ITEMS = 64
 GOOGLE_CLOUD_PROJECT = os.environ["GOOGLE_CLOUD_PROJECT"]
 GOOGLE_CLOUD_LOCATION = os.environ["GOOGLE_CLOUD_LOCATION"]
-LENS_MOSAIC_COLLECTION_ID = "mercari3m-collection-mm2"
+LENS_MOSAIC_COLLECTION_ID = "mercari1m-collection-mm2"
 HOSTED_URL = "https://lens-mosaic-nhhfh7g7iq-uc.a.run.app"
 
 vertexai.init(

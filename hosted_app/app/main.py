@@ -49,7 +49,7 @@ RANKING_CONFIG = (
 )
 SEARCH_TOP_K = 100
 MAX_TILE_ITEMS = 64
-COLLECTION_ID = os.getenv("LENS_MOSAIC_COLLECTION_ID", "mercari3m-collection-mm2")
+COLLECTION_ID = os.getenv("LENS_MOSAIC_COLLECTION_ID", "mercari1m-collection-mm2")
 DEFAULT_IMAGE_MIME_TYPE = "image/jpeg"
 TEXT_QUERY_HYBRID_WEIGHTS = [1.35, 0.65]
 IMAGE_QUERY_HYBRID_WEIGHTS = [0.65, 1.35]
@@ -69,8 +69,8 @@ class CollectionConfig:
 
 
 SUPPORTED_COLLECTIONS: dict[str, CollectionConfig] = {
-    "mercari3m-collection-mm2": CollectionConfig(
-        collection_id="mercari3m-collection-mm2",
+    "mercari1m-collection-mm2": CollectionConfig(
+        collection_id="mercari1m-collection-mm2",
         embedding_model="gemini-embedding-2-preview",
         text_vector_field="text_emb",
         image_vector_field="image_emb",

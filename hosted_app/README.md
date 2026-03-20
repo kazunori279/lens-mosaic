@@ -46,7 +46,7 @@ Set the required values in `.env` for your environment.
 
 If you use Gemini API mode, set `GOOGLE_API_KEY`.
 
-Set `LENS_MOSAIC_COLLECTION_ID=mercari3m-collection-mm2`.
+Set `LENS_MOSAIC_COLLECTION_ID=mercari1m-collection-mm2`.
 The hosted app now supports only the Gemini Embedding collection and derives the
 vector fields from that collection ID.
 
@@ -60,9 +60,9 @@ reuse the last published results instead of sending a new embedding request.
 
 Supported dataset:
 
-### mercari3m-collection-mm2 (Gemini Embedding)
+### mercari1m-collection-mm2 (Gemini Embedding)
 
-- **Collection**: `mercari3m-collection-mm2`
+- **Collection**: `mercari1m-collection-mm2`
 - **ANN Indexes**: `text-emb-index` (text), `image-emb-index` (image)
 - **Embedding Model**: `gemini-embedding-2-preview` (BYOE - Bring Your Own Embeddings)
 - **Embedding Dimensions**: `768` (reduced from `3072` default)
@@ -188,7 +188,7 @@ curl -k -X POST "${LENS_MOSAIC_URL}search" \
   -d '{"queries":["red handbag","small red purse"],"ranking_query":"small red handbag for daily use"}'
 ```
 
-Current local image-search latency on `mercari3m-collection-mm2` is roughly:
+Current local image-search latency on `mercari1m-collection-mm2` is roughly:
 
 - warm steady-state total: `1.1s` to `1.35s`
 - embedding generation: about `0.6s` to `0.9s`
