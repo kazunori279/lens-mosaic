@@ -496,11 +496,11 @@ def _get_item_details(item_id: str) -> dict | None:
 
     return {
         "id": item_id,
-        "name": obj.data.get("name", ""),
-        "description": obj.data.get("description", ""),
-        "price": obj.data.get("price", ""),
-        "url": obj.data.get("url", ""),
-        "img_url": obj.data.get("img_url", ""),
+        "name": str(obj.data.get("name", "")),
+        "description": str(obj.data.get("description", "")),
+        "price": str(obj.data.get("price", "")),
+        "url": str(obj.data.get("url", "")),
+        "img_url": str(obj.data.get("img_url", "")),
     }
 
 
